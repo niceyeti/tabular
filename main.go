@@ -130,8 +130,8 @@ func convert_track(track []string) (states [][][][]State) {
 		// And bottom to top...
 		for y := 0; y < height; y++ {
 			states[x] = append(states[x], make([][]State, 0, MAX_VELOCITY+1))
+			// Select cells bottom up, so the grid has a logical progression where positive x/y velocities are right/up, from (0,0).
 			cell_type := rune(track[height-y-1][x])
-
 			// Augment the track cell with x/y velocity values per each state
 			for vx := 0; vx < MAX_VELOCITY+1; vx++ {
 				states[x][y] = append(states[x][y], make([]State, 0, MAX_VELOCITY+1)) // +1 since zero is included as a velocity.
@@ -160,7 +160,7 @@ func convert_track(track []string) (states [][][][]State) {
 // html, but for displaying in a console this is truncated by simply displaying direction based on
 // the maximum vx/vy value as ^, >, v, <.
 func show_policy(states [][][][]State) {
-	for y := range rev(len(states[0])) {
+	for _, y := range rev(len(states[0])) {
 		fmt.Print(" ")
 		for x := range states {
 			dir := max_dir(states[x][y])
@@ -172,8 +172,7 @@ func show_policy(states [][][][]State) {
 
 // Show the track, for visual reference.
 func show_grid(states [][][][]State) {
-	for y := range rev(len(states[0])) {
-		fmt.Print(" ")
+	for _, y := range rev(len(states[0])) {
 		for x := range states {
 			fmt.Printf("%c ", states[x][y][0][0].cell_type)
 		}
@@ -194,7 +193,7 @@ func rev(length int) []int {
 // Note that this truncates some info, since only one of these orthogonal values sets is displayed;
 // this just allows showing progress.
 func show_max_values(states [][][][]State) {
-	for y := range rev(len(states[0])) {
+	for _, y := range rev(len(states[0])) {
 		fmt.Print(" ")
 		for x := range states {
 			velstates := states[x][y]
@@ -242,10 +241,13 @@ func max_vel_state(vel_states [][]State) (max_state *State) {
 	}
 
 	for vx := range vel_states {
-		for _, state := range vel_states[vx] {
+		for vy := range vel_states[vx] {
+			state := vel_states[vx][vy]
 			//fmt.Printf("%.1f - \n", state.value)
-			if state.value >= max_state.value {
-				max_state = &state
+			if state.vx > 0 && state.vy > 0 { // Skip states whose velocity components are both zero, excluded by problem def.
+				if state.value >= max_state.value {
+					max_state = &state
+				}
 			}
 		}
 	}
@@ -260,11 +262,11 @@ func init_state_values(states [][][][]State, value float64) {
 
 // Mutates every state using the passed function
 func mutate(states [][][][]State, fn func(s *State)) {
-	for _, row := range states {
-		for _, col := range row {
-			for _, vxs := range col {
-				for i := range vxs {
-					fn(&vxs[i])
+	for x := range states {
+		for y := range states[x] {
+			for vx := range states[x][y] {
+				for vy := range states[x][y][vx] {
+					fn(&states[x][y][vx][vy])
 				}
 			}
 		}
@@ -370,6 +372,7 @@ func get_successor(
 	new_y := int(math.Max(math.Min(float64(cur_state.y+new_vy), max_y), 0))
 
 	successor = &states[new_x][new_y][new_vx][new_vy]
+	//fmt.Println("States:\n", cur_state, "\n", successor, "\n", action)
 	return
 }
 
@@ -377,11 +380,17 @@ func get_rand_dv() int {
 	return rand.Int()%3 - 1
 }
 
-func get_rand_action() *Action {
-	return &Action{
+func get_rand_action(cur_state *State) (action *Action) {
+	action = &Action{
 		dvx: get_rand_dv(),
 		dvy: get_rand_dv(),
 	}
+	// By problem def, velocity components cannot both be zero, so the effect of this action must be checked.
+	for cur_state.vx+action.dvx == 0 && cur_state.vy+action.dvy == 0 {
+		action.dvx = get_rand_dv()
+		action.dvy = get_rand_dv()
+	}
+	return
 }
 
 func get_reward(target *State) (reward float64) {
@@ -391,7 +400,7 @@ func get_reward(target *State) (reward float64) {
 	case TRACK, FINISH:
 		reward = STEP_REWARD
 	case START:
-		reward = 0
+		reward = STEP_REWARD
 	default:
 		// Degenerate case; this is unreachable code if all actions are covered in switch.
 		panic("Shazbot!")
@@ -418,29 +427,32 @@ func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 
 	alpha := 0.1
 	gamma := 0.9
-	policy_alpha_max := func(state *State) (best_state *State, action *Action) {
-		//var best_state *State
+	policy_alpha_max := func(state *State) (target *State, action *Action) {
 		r := rand.Float64()
 		if r <= alpha {
 			// do something random
-			action := get_rand_action()
-			best_state = get_successor(states, state, action)
+			action := get_rand_action(state)
+			target = get_successor(states, state, action)
 		} else {
-			// select max-valued action: increment, decrement, or leave current x or y velocity, up to 5.
+			// Search for max-valued state per available actions.
 			max_val := -math.MaxFloat64
 			for dvx := -1; dvx < 2; dvx++ {
 				for dvy := -1; dvy < 2; dvy++ {
 					// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
 					action := &Action{dvx: dvx, dvy: dvy}
 					successor := get_successor(states, state, action)
+					// By problem def, velocity components cannot both be zero.
+					if successor.vx == 0 && successor.vy == 0 {
+						continue
+					}
 					if successor.value > max_val {
-						best_state = successor
+						target = successor
 					}
 				}
 			}
 		}
 
-		return best_state, action
+		return target, action
 	}
 
 	// deploy worker agents to generate episodes
@@ -479,17 +491,28 @@ func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 
 	processor := func(alpha, gamma float64) {
 		for episode := range episodes {
-			// Run updates backward, such that values fully propagate back from terminal states per episode
-			for t := range rev(len(*episode)) {
+			// TODO: how to set the value of the terminal state? This currently only updates values of all but the last state of an episode.
+			last_step := (*episode)[len(*episode)-1]
+			last_step.successor.value = last_step.reward
+			//fmt.Print("Episode: ")
+			// Run updates backward, such that values fully propagate back from terminal state per episode
+			for _, t := range rev(len(*episode)) {
 				// NOTE: not tracking states' is-visited status, so for now this is every-visit MC implementation.
 				step := (*episode)[t]
+				//fmt.Print("  ", step_str(&step))
+				//fmt.Println("t: ", t)
 				// TODO: can I show that the delta defined here will not 'fight' other updates to the same state?
 				// Can this be written such that competing updates cannot interfere with the final value?
 				step.state.value = step.state.value + alpha*(step.reward-gamma*step.successor.value)
 			}
+			//fmt.Println()
 		}
 	}
 	go processor(alpha, gamma)
+}
+
+func step_str(step *Step) string {
+	return fmt.Sprintf("%v %v %v", *step.state, *step.successor, step.reward)
 }
 
 func print_values_async(states [][][][]State) {
@@ -508,13 +531,13 @@ func main() {
 	// convert to state space
 	states := convert_track(racetrack)
 	// initialize the state values to something slightly larger than the lowest reward, for stability
-	init_state_values(states, -10)
+	init_state_values(states, COLLISION_REWARD*2)
 	// display startup policy
 	show_policy(states)
 	// show max values
 	show_max_values(states)
 	show_grid(states)
 
-	//alpha_mc_train_vanilla_parallel(states, 10)
-	//print_values_async(states)
+	alpha_mc_train_vanilla_parallel(states, 1)
+	print_values_async(states)
 }
