@@ -660,7 +660,7 @@ func print_values_async(states [][][][]State) {
 		show_max_values(states)
 		show_avg_values(states)
 		show_policy(states)
-		print_substates(states, 9, 4)
+		//print_substates(states, 9, 4)
 	}
 }
 
