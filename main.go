@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"time"
 
 	channerics "github.com/niceyeti/channerics/channels"
@@ -106,7 +107,7 @@ var (
 		"WWWWooooooWWWWWWWW",
 		"WWWW------WWWWWWWW",
 	}
-	track = full_track
+	track = debug_track
 )
 
 // Converts a tack input string array to an actual state grid of positions and velocities.
@@ -654,12 +655,12 @@ func step_str(step *Step) string {
 }
 
 func print_values_async(states [][][][]State) {
-	for range time.Tick(time.Second) {
+	for range time.Tick(time.Second * 3) {
 		show_grid(states)
 		show_max_values(states)
 		show_avg_values(states)
 		show_policy(states)
-		print_substates(states, 1, 4)
+		print_substates(states, 9, 4)
 	}
 }
 
@@ -679,6 +680,6 @@ func main() {
 	show_grid(states)
 
 	done := make(chan struct{})
-	alpha_mc_train_vanilla_parallel(states, 1, done)
+	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU(), done)
 	print_values_async(states)
 }
