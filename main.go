@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/rand"
 	"time"
+
+	channerics "github.com/niceyeti/channerics/channels"
 )
 
 // The state consists of the position and current x/y velocity.
@@ -456,6 +458,7 @@ func check_terminal_collision(states [][][][]State, start *State, vx, vy int) (s
 		}
 		for dy := 0; dy <= vy; dy++ {
 			newy := start.y + dy
+			// Ignore out of bounds states
 			if newy > max_y {
 				continue
 			}
@@ -523,6 +526,11 @@ func print_substates(states [][][][]State, x, y int) {
 }
 
 // Given the current state, returns the max-valued reachable state per all available actions.
+// NOTE: algorithmically the agent must consider collision when searching for the maximum
+// next state. The get_successor function does this internally, which here results in the returned
+// state presumably being a low-valued collision state (a wall). But it just needs to remembered
+// that the agent's max value search must account for the environment, else its policy might converge
+// to something invalid due to invalid values, by evaluating bad states as good.
 func get_max_successor(states [][][][]State, cur_state *State) (target *State, action *Action) {
 	max_val := -math.MaxFloat64
 	for dvx := -1; dvx < 2; dvx++ {
@@ -534,6 +542,7 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 			if successor.vx == 0 && successor.vy == 0 {
 				continue
 			}
+
 			if successor.value > max_val {
 				max_val = successor.value
 				target = successor
@@ -551,9 +560,11 @@ which are sent to the estimator to update the state values. Coordination is simp
 	- processor halts the agents to empty its episode queue and update state values
 TODO: proper goroutine cancellation and cleanup, chan closure.
 */
-func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
-	// TODO: exploring starts, to ensure all state action pairs are visited.
-	// Just remember to exclude invalid/out-of-bound states and zero-velocity states.
+func alpha_mc_train_vanilla_parallel(
+	states [][][][]State,
+	nworkers int,
+	done <-chan struct{}) {
+	// Note: remember to exclude invalid/out-of-bound states and zero-velocity states.
 	rand_restart := func() *State {
 		return get_random_start_state(states)
 	}
@@ -579,9 +590,11 @@ func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 		states [][][][]State,
 		start_state_gen func() *State,
 		policy_fn func(*State) (*State, *Action),
-		episodes chan *Episode) {
+		episodes chan<- *Episode,
+		done <-chan struct{}) {
 
-		for {
+		cancelled := false
+		for !cancelled {
 			episode := Episode{}
 			state := start_state_gen()
 			for !is_terminal(state) {
@@ -598,18 +611,31 @@ func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 
 				state = successor
 			}
-			episodes <- &episode
+
+			// Send the episode, checking for cancellation.
+			select {
+			case episodes <- &episode:
+			case <-done:
+				cancelled = true
+			}
 		}
 	}
 
 	for i := 0; i < nworkers; i++ {
-		go agent_worker(states, rand_restart, policy_alpha_max, episodes)
+		go agent_worker(states, rand_restart, policy_alpha_max, episodes, done)
 	}
 
 	alpha := 0.1
 	gamma := 0.9
 	processor := func(alpha, gamma float64) {
-		for episode := range episodes {
+		// When processor receives no further episodes, training is halted and episodes chan closed.
+		// The mixed chan ownership is a golang code smell, but fine for now because context is limited to the outer func.
+		// Robust production code should more rigorously frame out the chan ownership, var contexts, closure, etc.
+		defer func() {
+			close(episodes)
+		}()
+
+		for episode := range channerics.OrDone(done, episodes) {
 			// Set terminal states to the value of the reward for stepping into them.
 			last_step := (*episode)[len(*episode)-1]
 			last_step.successor.value = last_step.reward
@@ -655,6 +681,7 @@ func main() {
 	show_max_values(states)
 	show_grid(states)
 
-	alpha_mc_train_vanilla_parallel(states, 1)
+	done := make(chan struct{})
+	alpha_mc_train_vanilla_parallel(states, 1, done)
 	print_values_async(states)
 }
