@@ -58,53 +58,56 @@ const (
 	STEP_REWARD      = -1
 )
 
-// TODO: this is an input to the program. It consists only of the positional track cell type info.
-var track []string = []string{
-	"WWWWWW",
-	"Woooo+",
-	"Woooo+",
-	"WooWWW",
-	"WooWWW",
-	"WooWWW",
-	"WooWWW",
-	"W--WWW",
-}
+// The classical track and a smaller debug track for development.
+var (
+	debug_track []string = []string{
+		"WWWWWW",
+		"Woooo+",
+		"Woooo+",
+		"WooWWW",
+		"WooWWW",
+		"WooWWW",
+		"WooWWW",
+		"W--WWW",
+	}
 
-/*
-big_course = ['WWWWWWWWWWWWWWWWWW',
-              'WWWWooooooooooooo+',
-              'WWWoooooooooooooo+',
-              'WWWoooooooooooooo+',
-              'WWooooooooooooooo+',
-              'Woooooooooooooooo+',
-              'Woooooooooooooooo+',
-              'WooooooooooWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WoooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWooooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWoooooooWWWWWWWW',
-              'WWWWooooooWWWWWWWW',
-              'WWWWooooooWWWWWWWW',
-              'WWWW------WWWWWWWW']
-*/
+	big_track []string = []string{
+		"WWWWWWWWWWWWWWWWWW",
+		"WWWWooooooooooooo+",
+		"WWWoooooooooooooo+",
+		"WWWoooooooooooooo+",
+		"WWooooooooooooooo+",
+		"Woooooooooooooooo+",
+		"Woooooooooooooooo+",
+		"WooooooooooWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WoooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWooooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWoooooooWWWWWWWW",
+		"WWWWooooooWWWWWWWW",
+		"WWWWooooooWWWWWWWW",
+		"WWWW------WWWWWWWW",
+	}
+	track = debug_track
+)
 
 // Converts a tack input string array to an actual state grid of positions and velocities.
 // The orientation is such that the bottom/left most position of the track (when printed in a console) is (0,0).
@@ -253,12 +256,6 @@ func show_all(states [][][][]State, fn func(s *State) string) {
 // Returns a printable run for the max direction value in some x/y grid position.
 // This is hyper simplified for console based display.
 // Note only > and ^ are possible via the problem definition, since velocity components are constrained to positive values.
-func max_dir(vel_states [][]State) rune {
-	// Get the max value from the state subset of velocities
-	max_state := max_vel_state(vel_states)
-	return put_max_dir(max_state)
-}
-
 func put_max_dir(state *State) rune {
 	if state.vx > state.vy {
 		return '>'
