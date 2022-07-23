@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime"
 	"time"
 )
 
@@ -46,8 +45,9 @@ const (
 
 // Acceleration actions in the x or y direction.
 const (
-	MAX_VELOCITY = 4
-	MIN_VELOCITY = 0
+	MAX_VELOCITY   = 4
+	MIN_VELOCITY   = 0
+	NUM_VELOCITIES = 5
 )
 
 // Rewards
@@ -56,17 +56,7 @@ const (
 	STEP_REWARD      = -1
 )
 
-/*
-// Action directions for the policy.
-const (
-	UP    = iota
-	RIGHT = iota
-	DOWN  = iota
-	LEFT  = iota
-)
-*/
-
-// TODO: this is an input to the program. It consists only of the positional track cell info.
+// TODO: this is an input to the program. It consists only of the positional track cell type info.
 var track []string = []string{
 	"WWWWWW",
 	"Woooo+",
@@ -398,15 +388,18 @@ func get_start_states(states [][][][]State) (start_states []*State) {
 
 // For MC random starts, grab a random state that is on the track (i.e. is actionable to the agent).
 func get_random_start_state(states [][][][]State) (start_state *State) {
-	start_state = &states[0][0][0][0]
+	max_x := len(states)
+	max_y := len(states[0])
+
+	start_state = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
 	for !(start_state.cell_type == TRACK || start_state.cell_type == START) {
-		start_state = &states[rand.Int()%len(states)][rand.Int()%len(states[0])][0][0]
+		start_state = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
 	}
 	// Select a random non-zero velocity substate from this x/y position
 	rvx, rvy := 0, 0
 	for rvx == 0 && rvy == 0 {
-		rvx = rand.Int() % len(states[0][0])
-		rvy = rand.Int() % len(states[0][0][0])
+		rvx = rand.Int() % NUM_VELOCITIES
+		rvy = rand.Int() % NUM_VELOCITIES
 	}
 	start_state = &states[start_state.x][start_state.y][rvx][rvy]
 	return
@@ -452,17 +445,21 @@ func get_successor(
 // metric for collisions. Off grid actions are not accounted for.
 // Returns: the first state with which the agent would collide; nil, if no collision.
 func check_terminal_collision(states [][][][]State, start *State, vx, vy int) (state *State) {
+	max_x := len(states) - 1
+	max_y := len(states[0]) - 1
+
 	for dx := 0; dx <= vx; dx++ {
 		newx := start.x + dx
 		// Ignore out of bounds states
-		if newx > len(states)-1 {
+		if newx > max_x {
 			continue
 		}
 		for dy := 0; dy <= vy; dy++ {
 			newy := start.y + dy
-			if newy > len(states[0])-1 {
+			if newy > max_y {
 				continue
 			}
+
 			traversed := &states[newx][newy][vx][vy]
 			if traversed.cell_type == WALL {
 				state = traversed
@@ -473,6 +470,7 @@ func check_terminal_collision(states [][][][]State, start *State, vx, vy int) (s
 	return
 }
 
+// Get a random velocity change (dv) in (-1,0,+1) (per problem def.).
 func get_rand_dv() int {
 	return rand.Int()%3 - 1
 }
@@ -515,7 +513,7 @@ func is_live(state *State) bool {
 
 // For a fixed grid position, print all of its velocity subvalues.
 func print_substates(states [][][][]State, x, y int) {
-	fmt.Println("Velocity vals for cell ", x, ",", y)
+	fmt.Printf("Velocity vals for cell (%d,%d)\n", x, y)
 	for vx := 0; vx < len(states[x][y]); vx++ {
 		for vy := 0; vy < len(states[x][y][vx]); vy++ {
 			s := states[x][y][vx][vy]
@@ -524,12 +522,34 @@ func print_substates(states [][][][]State, x, y int) {
 	}
 }
 
+// Given the current state, returns the max-valued reachable state per all available actions.
+func get_max_successor(states [][][][]State, cur_state *State) (target *State, action *Action) {
+	max_val := -math.MaxFloat64
+	for dvx := -1; dvx < 2; dvx++ {
+		for dvy := -1; dvy < 2; dvy++ {
+			// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
+			candidate_action := &Action{dvx: dvx, dvy: dvy}
+			successor := get_successor(states, cur_state, candidate_action)
+			// By problem def, velocity components cannot both be zero.
+			if successor.vx == 0 && successor.vy == 0 {
+				continue
+			}
+			if successor.value > max_val {
+				max_val = successor.value
+				target = successor
+				action = candidate_action
+			}
+		}
+	}
+	return
+}
+
 /*
 Implements vanilla alpha-MC using a fixed number of workers to generate episodes
 which are sent to the estimator to update the state values. Coordination is simple:
 	- agents generate and queue episodes up to some stopping criteria
 	- processor halts the agents to empty its episode queue and update state values
-TODO: goroutine cancellation and cleanup, chan closure.
+TODO: proper goroutine cancellation and cleanup, chan closure.
 */
 func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 	// TODO: exploring starts, to ensure all state action pairs are visited.
@@ -547,21 +567,7 @@ func alpha_mc_train_vanilla_parallel(states [][][][]State, nworkers int) {
 			target = get_successor(states, state, action)
 		} else {
 			// Exploitation: search for max-valued state per available actions.
-			max_val := -math.MaxFloat64
-			for dvx := -1; dvx < 2; dvx++ {
-				for dvy := -1; dvy < 2; dvy++ {
-					// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
-					action := &Action{dvx: dvx, dvy: dvy}
-					successor := get_successor(states, state, action)
-					// By problem def, velocity components cannot both be zero.
-					if successor.vx == 0 && successor.vy == 0 {
-						continue
-					}
-					if successor.value > max_val {
-						target = successor
-					}
-				}
-			}
+			target, action = get_max_successor(states, state)
 		}
 
 		return target, action
@@ -625,7 +631,7 @@ func step_str(step *Step) string {
 }
 
 func print_values_async(states [][][][]State) {
-	for range time.Tick(time.Second * 1) {
+	for range time.Tick(time.Second) {
 		show_grid(states)
 		show_max_values(states)
 		show_avg_values(states)
@@ -649,6 +655,6 @@ func main() {
 	show_max_values(states)
 	show_grid(states)
 
-	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU())
+	alpha_mc_train_vanilla_parallel(states, 1)
 	print_values_async(states)
 }
