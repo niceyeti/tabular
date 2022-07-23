@@ -71,7 +71,7 @@ var (
 		"W--WWW",
 	}
 
-	big_track []string = []string{
+	full_track []string = []string{
 		"WWWWWWWWWWWWWWWWWW",
 		"WWWWooooooooooooo+",
 		"WWWoooooooooooooo+",
@@ -106,7 +106,7 @@ var (
 		"WWWWooooooWWWWWWWW",
 		"WWWW------WWWWWWWW",
 	}
-	track = debug_track
+	track = full_track
 )
 
 // Converts a tack input string array to an actual state grid of positions and velocities.
