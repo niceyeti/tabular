@@ -570,57 +570,66 @@ func alpha_mc_train_vanilla_parallel(
 	}
 
 	// deploy worker agents to generate episodes
-	episodes := make(chan *Episode, nworkers)
 	agent_worker := func(
 		states [][][][]State,
 		start_state_gen func() *State,
 		policy_fn func(*State) (*State, *Action),
-		episodes chan<- *Episode,
-		done <-chan struct{}) {
+		done <-chan struct{}) <-chan *Episode {
 
-		cancelled := false
-		for !cancelled {
-			episode := Episode{}
-			state := start_state_gen()
-			for !is_terminal(state) {
-				successor, action := policy_fn(state)
-				reward := get_reward(successor)
-				episode = append(
-					episode,
-					Step{
-						state:     state,
-						successor: successor,
-						action:    action,
-						reward:    reward,
-					})
+		episodes := make(chan *Episode)
+		go func() {
+			defer close(episodes)
 
-				state = successor
+			// Generate and send episodes until cancellation.
+			for {
+				episode := Episode{}
+				state := start_state_gen()
+				for !is_terminal(state) {
+					successor, action := policy_fn(state)
+					reward := get_reward(successor)
+					episode = append(
+						episode,
+						Step{
+							state:     state,
+							successor: successor,
+							action:    action,
+							reward:    reward,
+						})
+					state = successor
+				}
+
+				select {
+				case episodes <- &episode:
+				case <-done:
+					return
+				}
 			}
+		}()
 
-			// Send the episode, checking for cancellation.
-			select {
-			case episodes <- &episode:
-			case <-done:
-				cancelled = true
-			}
-		}
+		return episodes
 	}
 
+	// Fan in the workers to a single channel. This allows the processor to throttle the agents
+	// when not pulling episodes from their chans, which in turn serializes matrix reads/writes.
+	// Note: the serialization is not robust or production worthy sans locking the state matrix.
+	// Chans provide a sufficient coordination mechanism for prototyping, but is not rigorous.
+	workers := []<-chan *Episode{}
 	for i := 0; i < nworkers; i++ {
-		go agent_worker(states, rand_restart, policy_alpha_max, episodes, done)
+		ch := agent_worker(states, rand_restart, policy_alpha_max, done)
+		workers = append(workers, ch)
+	}
+	episodes := channerics.Merge(done, workers...)
+
+	progress_hook := func(episode_count int) {
+		// TODO: copy and send the entire state matrix (policy, values, etc.) to update views...
 	}
 
 	alpha := 0.1
 	gamma := 0.9
-	estimator := func(alpha, gamma float64) {
-		// When processor receives no further episodes, training is halted and episodes chan closed.
-		// The mixed chan ownership is a golang code smell, but fine for now because context is limited to the outer func.
-		// Robust production code should more rigorously frame out the chan ownership, var contexts, closure, etc.
-		defer func() {
-			close(episodes)
-		}()
-
-		for episode := range channerics.OrDone(done, episodes) {
+	estimator := func(alpha, gamma float64,
+		hookFn func(int)) {
+		episode_count := 0
+		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
 			last_step := (*episode)[len(*episode)-1]
 			last_step.successor.value = last_step.reward
@@ -632,9 +641,13 @@ func alpha_mc_train_vanilla_parallel(
 				reward += step.reward
 				step.state.value += (alpha * (reward - step.state.value))
 			}
+
+			// Hook: periodically do some other processing (publishing state values for views, etc.)
+			episode_count++
+			hookFn(episode_count)
 		}
 	}
-	go estimator(alpha, gamma)
+	go estimator(alpha, gamma, progress_hook)
 }
 
 func step_str(step *Step) string {
