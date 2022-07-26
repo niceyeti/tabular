@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -20,22 +21,22 @@ type State struct {
 	value        float64
 }
 
-// The action consists of the velocity increment/decrement and horizontal or vertical direction.
-// In this problem, for three actions (+1, -1, 0), this yields 9 actions per step, e.g. |(+1, -1, 0)|**2.
+// The action consists of a velocity increment/decrement and horizontal or vertical direction.
+// In this problem, three actions (+1, -1, 0) yields 9 actions per step, e.g. |(+1, -1, 0)|**2.
 type Action struct {
 	dvx, dvy int
 }
 
-// A step is a single SARSA time step of an agent: do action a in state s, observe reward r and successor state s'.
+// A step is a single SARSA time step of an agent: do action a in state s, observe reward r and successor s'.
 type Step struct {
-	// NOTE: for the sake of parallel training, give due consideration to advantages in these being pointers or copies.
+	// NOTE: per possible race conditions, give due consideration to advantages in these being pointers or copies.
 	state     *State
 	successor *State
 	action    *Action
 	reward    float64
 }
 
-// An episode is merely a sequence of Steps.
+// An episode is a sequence of Steps.
 type Episode []Step
 
 // Track cell types
@@ -155,7 +156,7 @@ func convert_track(track []string) (states [][][][]State) {
 // sense from the perspective of driving/control. The encoding used displays a directional arrow at
 // each x/y grid cell position, whose magnitude determines color of the cell. This can be done in
 // html, but for displaying in a console this is truncated by simply displaying direction based on
-// the maximum vx/vy value as ^, >, v, <.
+// the maximum vx/vy value as on of ^, >, v, <.
 func show_policy(states [][][][]State) {
 	for _, y := range rev(len(states[0])) {
 		fmt.Print(" ")
@@ -292,11 +293,11 @@ func max_vel_state(vel_states [][]State) (max_state *State) {
 
 // Initializes the state values
 func init_state_values(states [][][][]State, value float64) {
-	mutate(states, func(s *State) { s.value = value })
+	visit(states, func(s *State) { s.value = value })
 }
 
-// Mutates every state using the passed function
-func mutate(states [][][][]State, fn func(s *State)) {
+// Visits every state using the passed function
+func visit(states [][][][]State, fn func(s *State)) {
 	for x := range states {
 		for y := range states[x] {
 			for vx := range states[x][y] {
@@ -363,18 +364,6 @@ agent's that will take an eternity to randomly reach some goal state and thereby
 
 
 */
-
-func visit(states [][][][]State, fn func(*State)) {
-	for x := range states {
-		for y := range states[x] {
-			for vx := range states[x][y] {
-				for vy := range states[x][y][vx] {
-					fn(&states[x][y][vx][vy])
-				}
-			}
-		}
-	}
-}
 
 func get_start_states(states [][][][]State) (start_states []*State) {
 	accumulator := func(state *State) {
@@ -496,7 +485,7 @@ func get_reward(target *State) (reward float64) {
 	case START, TRACK, FINISH:
 		reward = STEP_REWARD
 	default:
-		// Degenerate case; this is unreachable code if all actions are covered in switch.
+		// Degenerate case; unreachable code if all actions are covered in switch.
 		panic("Shazbot!")
 	}
 	return
@@ -556,7 +545,6 @@ Implements vanilla alpha-MC using a fixed number of workers to generate episodes
 which are sent to the estimator to update the state values. Coordination is simple:
 	- agents generate and queue episodes up to some stopping criteria
 	- processor halts the agents to empty its episode queue and update state values
-TODO: proper goroutine cancellation and cleanup, chan closure.
 */
 func alpha_mc_train_vanilla_parallel(
 	states [][][][]State,
@@ -578,7 +566,6 @@ func alpha_mc_train_vanilla_parallel(
 			// Exploitation: search for max-valued state per available actions.
 			target, action = get_max_successor(states, state)
 		}
-
 		return target, action
 	}
 
@@ -625,7 +612,7 @@ func alpha_mc_train_vanilla_parallel(
 
 	alpha := 0.1
 	gamma := 0.9
-	processor := func(alpha, gamma float64) {
+	estimator := func(alpha, gamma float64) {
 		// When processor receives no further episodes, training is halted and episodes chan closed.
 		// The mixed chan ownership is a golang code smell, but fine for now because context is limited to the outer func.
 		// Robust production code should more rigorously frame out the chan ownership, var contexts, closure, etc.
@@ -640,22 +627,22 @@ func alpha_mc_train_vanilla_parallel(
 			// Propagate rewards backward from terminal state per episode
 			reward := 0.0
 			for _, t := range rev(len(*episode)) {
-				// NOTE: not tracking states' is-visited status, so for now this is every-visit MC implementation.
+				// NOTE: not tracking states' is-visited status, so for now this is an every-visit MC implementation.
 				step := (*episode)[t]
 				reward += step.reward
 				step.state.value += (alpha * (reward - step.state.value))
 			}
 		}
 	}
-	go processor(alpha, gamma)
+	go estimator(alpha, gamma)
 }
 
 func step_str(step *Step) string {
 	return fmt.Sprintf("%v %v %v", *step.state, *step.successor, step.reward)
 }
 
-func print_values_async(states [][][][]State) {
-	for range time.Tick(time.Second * 3) {
+func print_values_async(states [][][][]State, done <-chan struct{}) {
+	for range channerics.NewTicker(done, time.Second*2) {
 		show_grid(states)
 		show_max_values(states)
 		show_avg_values(states)
@@ -679,7 +666,12 @@ func main() {
 	show_max_values(states)
 	show_grid(states)
 
-	done := make(chan struct{})
-	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU(), done)
-	print_values_async(states)
+	train(states, time.Minute)
+}
+
+func train(states [][][][]State, duration time.Duration) {
+	fmt.Printf("Starting training for duration %v\n", duration)
+	train_ctx, _ := context.WithTimeout(context.Background(), duration)
+	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU(), train_ctx.Done())
+	print_values_async(states, train_ctx.Done())
 }

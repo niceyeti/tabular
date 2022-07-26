@@ -98,6 +98,53 @@ func main() {
 
 
 
+Frontending:
+
+The goal is simply this: much like generating an svg describing the current value function 
+and policy using go templates (which would be super easy), I simply want to ensure such
+a view dynamically updates:
+    1) Navigating to the page causes the visualization to refresh by default
+    2) Some compact description language for communicating what should change and how
+    Update function:
+        - Given ele id, update these attributes keys with these values
+    Thus a state has-a rendering function encapsulating one target view type (svg ele, xml ele, etc):
+    - Id() string: the ele id
+    - String() string: svg ele string (e.g. rect, arrow, etc.) used to initialize the element as html
+    - Update() (key string, val string)[]: convert a value change to a set of new attribute key/values
+    The socket listens for these updates. When it receives them,
+    it runs a simple procedural loop in vanilla js:
+        for ele_delta in update:
+            dom_ele = dom.Get(ele_delta.id)
+            for kvp in ele_delta:
+                dom_ele.attrib[kvp.key] = kvp.value
+    The svg will automatically render the new values.
+
+
+
+
+- efficient, fast to produce, something a research coder could build rapidly, not over-speced
+- prefer svg because html elements are used (and html events), unlike canvas
+- server side push (websockets)
+- golang generated html template
+- some default communication glue (websockets perfect for this)
+- focused solely on a pure, simple function: given these values changes, update these items
+    * divide and conquer data from ui
+    * transparent mapping of some kind
+    * could use element ids to store positional/relational info for updating the ele
+
+Multiple solutions:
+1) Golang generated template and websockets
+    * generate the svg once, containing ele id info (for position, type, etc)
+    * on server side change, notify, send message: each ele knows a function for updating itself
+    * svg attributes provides a somewhat compact static language; it should be possible to translate go-code to these changes
+    * 
+
+    "Given this ele id, 1) replace existing 2) update its attributes"
+
+
+The core question is when X changes on the server, what ele should be updated and how should it be updated?
+Doing this in a compact transparent manner.
+
 
 
 
