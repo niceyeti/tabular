@@ -1,3 +1,12 @@
+/*
+This is a single page reinforcement learning application for which I implemented a few classical
+RL approaches to the race track problem, and visualize the properties of the training regime in realtime
+(golang runtime telemetry, value function, error, etc). The RL is purely for personal review,
+not optimal implementation and behavior; these methods would be more descriptively written up in matrix
+form in Python. However this implementation leverages goroutines to maximize training, albeit
+modestly.
+*/
+
 package main
 
 import (
@@ -7,6 +16,7 @@ import (
 	"math/rand"
 	"runtime"
 	"time"
+	"html/template"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
@@ -603,6 +613,13 @@ func alpha_mc_train_vanilla_parallel(
 				case <-done:
 					return
 				}
+
+				// done-guard
+				select {
+				case <-done:
+					return
+				default:
+				}
 			}
 		}()
 
@@ -610,7 +627,7 @@ func alpha_mc_train_vanilla_parallel(
 	}
 
 	// Fan in the workers to a single channel. This allows the processor to throttle the agents
-	// when not pulling episodes from their chans, which in turn serializes matrix reads/writes.
+	// by not pulling episodes from their chans, which in turn pseudo-serializes matrix read/write.
 	// Note: the serialization is not robust or production worthy sans locking the state matrix.
 	// Chans provide a sufficient coordination mechanism for prototyping, but is not rigorous.
 	workers := []<-chan *Episode{}
@@ -626,7 +643,8 @@ func alpha_mc_train_vanilla_parallel(
 
 	alpha := 0.1
 	gamma := 0.9
-	estimator := func(alpha, gamma float64,
+	estimator := func(
+		alpha, gamma float64,
 		hookFn func(int)) {
 		episode_count := 0
 		for episode := range episodes {
@@ -680,7 +698,64 @@ func main() {
 	show_grid(states)
 
 	train(states, time.Minute)
+	serve_views()
+
 }
+
+/*
+Gist: I want to serve svg-based views of training information (value functions, policy info, etc).
+Svg is nice because it is declarative; real values map directly to attributes (like heatmaps).
+The issue is that while I could regenerate such views from an html template periodically, the client
+must then refresh the page to see the new view. Instead I want to push info from the server to the client,
+which requires web sockets. It also requires some logic and mapping to determine which values to update.
+I wish there was a sophisticated way to do this, but my approach is more or less procedural. Hopefully
+something more clever will become clear.
+
+The plan: generate an initial svg containing item id's by which to map RL values to displayed values.
+This will be a visual grid of the agent's V(s) values, where each cell has some searchable identifier.
+When new values occur, the deltas are sent to the client to update via a simple loop in js.
+
+Task 0: serve a page and demonstrate server side push updates to it.
+Task 1: bind this info to the agent value function with mathematical transformation (e.g. color mapping or policy vectors)
+Task 3: add additional info (golang runtime telemetry, etc), Q(s,a) values
+
+Lessons learned: the requirement of serving a basic realtime visualization is satisfied by SSE, and has promising
+self-contained security considerations (runs entirely over http, may not consume as many connections). However
+I'm going with full-duplex websockets for a more expressive language to meet future requirements. The differences
+are not that significant, since this app only requires a small portion of websocket functionality at half-duplex.
+Summary: SSEs are great and modest, suitable to something like ads. But websockets are more expressive but connection heavy.
+*/
+func serve_state_values(states [][][][]State) {
+	
+	t := template.New("state values")
+	
+
+
+	html := `
+	<html>
+	<body>
+		<div>
+			<svg width="500px" height="500px">
+				<!--The grid square-->
+				<rect x="0px" y="10px" width="5%" height="5%" fill="none" stroke="black" stroke-width="1px"/>
+				<!--The value information-->
+				<text x="5px" y="25px" stroke="blue">A</text>
+			</svg>
+		</div>
+	</body>
+	</html>
+	`
+
+	
+
+
+
+
+
+
+
+}
+
 
 func train(states [][][][]State, duration time.Duration) {
 	fmt.Printf("Starting training for duration %v\n", duration)
