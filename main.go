@@ -809,8 +809,8 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 	visit_xy_states(states, func(velstates [][]State) {
 		x, y := velstates[0][0].x, velstates[0][0].y
 		// flip the y indices for displaying in svg coordinate system
-		cells[x][max_y-y-1] = Cell{
-			X: x, Y: y,
+		cells[x][y] = Cell{
+			X: x, Y: max_y - y - 1,
 			Max: atomicRead(&max_vel_state(velstates).value),
 		}
 	})
@@ -837,17 +837,35 @@ func serve_state_values(states [][][][]State) {
 		if _, err = t.Parse(`
 		<html>
 			<body>
-				<div id="state_values" width="500px" height="500px">
-					<svg width="500px" height="500px">
-					{{ $numcells := len . }}
-					{{ $cell_width := div 500 (len .) }}
-					{{ $cell_height := $cell_width }}
-					{{ $half_height := div $cell_height 2 }}
-					{{ $half_width := div $cell_width 2 }}
+			{{ $x_cells := len . }}
+			{{ $y_cells := len (index . 0)}}
+			{{ $width := 500 }}
+			{{ $cell_width := div $width $x_cells }}
+			{{ $height := mult $cell_width $y_cells }}
+			{{ $cell_height := $cell_width}}
+			{{ $half_height := div $cell_height 2 }}
+			{{ $half_width := div $cell_width 2 }}
+			<div>Num cells: {{ $x_cells }} Y cells: {{ $y_cells}}</div>
+				<div id="state_values">
+					<svg width="{{ $width }}px" height="{{ $height }}px">
 					{{ range $row := . }}
 						{{ range $cell := $row }}
-							<rect x="{{ mult $cell.X $cell_width }}px" y="{{ mult $cell.Y $cell_height }}px" width="{{ $cell_width }}px" height="{{ $cell_height }}px" fill="none" stroke="black" stroke-width="1px"/>
-							<text x="{{ add (mult $cell.X $cell_width) $half_width }}px" y="{{ add (mult $cell.Y $cell_height) $half_height }}px" stroke="blue">{{ printf "%.2f" $cell.Max }}</text>
+							<g>
+								<rect 
+									x="{{ mult $cell.X $cell_width }}px" 
+									y="{{ mult $cell.Y $cell_height }}px" 
+									width="{{ $cell_width }}px" 
+									height="{{ $cell_height }}px" 
+									fill="none" 
+									stroke="black"
+									stroke-width="1px"/>
+								<text 
+									x="{{ add (mult $cell.X $cell_width) $half_width }}px" 
+									y="{{ add (mult $cell.Y $cell_height) $half_height }}px" 
+									stroke="blue"
+									dominant-baseline="middle" text-anchor="middle"
+									>{{ printf "%.2f" $cell.Max }}</text>
+							</g>
 						{{ end }}
 					{{ end }}
 					</svg>
