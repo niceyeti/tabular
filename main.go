@@ -12,10 +12,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"html/template"
 	"math"
 	"math/rand"
-	"net/http"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -726,7 +724,6 @@ func atomicSet(val *float64, new_val float64) {
 			break
 		}
 	}
-	return
 }
 
 func step_str(step *Step) string {
@@ -759,130 +756,6 @@ func main() {
 	show_grid(states)
 
 	train(states, time.Minute)
-
-}
-
-/*
-Gist: I want to serve svg-based views of training information (value functions, policy info, etc).
-Svg is nice because it is declarative; real values map directly to attributes (like heatmaps).
-The issue is that while I could regenerate such views from an html template periodically, the client
-must then refresh the page to see the new view. Instead I want to push info from the server to the client,
-which requires web sockets. It also requires some logic and mapping to determine which values to update.
-I wish there was a sophisticated way to do this, but my approach is more or less procedural. Hopefully
-something more clever will become clear.
-
-The plan: generate an initial svg containing item id's by which to map RL values to displayed values.
-This will be a visual grid of the agent's V(s) values, where each cell has some searchable identifier.
-When new values occur, the deltas are sent to the client to update via a simple loop in js.
-
-Task 0: serve a page and demonstrate server side push updates to it.
-Task 1: bind this info to the agent value function with mathematical transformation (e.g. color mapping or policy vectors)
-Task 3: add additional info (golang runtime telemetry, etc), Q(s,a) values
-
-Lessons learned: the requirement of serving a basic realtime visualization is satisfied by SSE, and has promising
-self-contained security considerations (runs entirely over http, may not consume as many connections). However
-I'm going with full-duplex websockets for a more expressive language to meet future requirements. The differences
-are not that significant, since this app only requires a small portion of websocket functionality at half-duplex.
-Summary: SSEs are great and modest, suitable to something like ads. But websockets are more expressive but connection heavy.
-*/
-
-// Converts the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
-// oriented in svg coordinate system such that [0][0] is the logical cell that would
-// be printed in the console at top left. This purpose of [][]Cells is convenient
-// traversal and data for generating golang templates; otherwise one must implement
-// ugly template funcs to map the [][][][]State structure to views, which is tedious.
-// The purpose of Cell itself is to contain ephemeral descriptors (max action direction,
-// etc) useful for putting in the view.
-type Cell struct {
-	X, Y int
-	Max  float64
-	//velocity_vals [][]float64 // indexed by vx and vy, per problem definiton
-}
-
-func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
-	cells = make([][]Cell, len(states))
-	max_y := len(states[0])
-	for x := range states {
-		cells[x] = make([]Cell, max_y)
-	}
-
-	visit_xy_states(states, func(velstates [][]State) {
-		x, y := velstates[0][0].x, velstates[0][0].y
-		// flip the y indices for displaying in svg coordinate system
-		cells[x][y] = Cell{
-			X: x, Y: max_y - y - 1,
-			Max: atomicRead(&max_vel_state(velstates).value),
-		}
-	})
-
-	return
-}
-
-// TODO: once I get the gist of ownership, the server will be completely refactored.
-// states will not be passed but communicated (e.g. via chan), server will be in its own file, etc)
-func serve_state_values(states [][][][]State) {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("parsing...")
-		// Build the template, bind data
-		Cells := convert_states_to_cells(states)
-
-		t := template.New("state-values").Funcs(
-			template.FuncMap{
-				"add":  func(i, j int) int { return i + j },
-				"sub":  func(i, j int) int { return i - j },
-				"mult": func(i, j int) int { return i * j },
-				"div":  func(i, j int) int { return i / j },
-			})
-		var err error
-		if _, err = t.Parse(`
-		<html>
-			<body>
-			{{ $x_cells := len . }}
-			{{ $y_cells := len (index . 0)}}
-			{{ $width := 500 }}
-			{{ $cell_width := div $width $x_cells }}
-			{{ $height := mult $cell_width $y_cells }}
-			{{ $cell_height := $cell_width}}
-			{{ $half_height := div $cell_height 2 }}
-			{{ $half_width := div $cell_width 2 }}
-			<div>Num cells: {{ $x_cells }} Y cells: {{ $y_cells}}</div>
-				<div id="state_values">
-					<svg width="{{ $width }}px" height="{{ $height }}px">
-					{{ range $row := . }}
-						{{ range $cell := $row }}
-							<g>
-								<rect 
-									x="{{ mult $cell.X $cell_width }}px" 
-									y="{{ mult $cell.Y $cell_height }}px" 
-									width="{{ $cell_width }}px" 
-									height="{{ $cell_height }}px" 
-									fill="none" 
-									stroke="black"
-									stroke-width="1px"/>
-								<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-									x="{{ add (mult $cell.X $cell_width) $half_width }}px" 
-									y="{{ add (mult $cell.Y $cell_height) $half_height }}px" 
-									stroke="blue"
-									dominant-baseline="middle" text-anchor="middle"
-									>{{ printf "%.2f" $cell.Max }}</text>
-							</g>
-						{{ end }}
-					{{ end }}
-					</svg>
-				</div>
-			</body>
-		</html>
-		`); err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-
-		if err = t.Execute(w, Cells); err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-	})
-	http.ListenAndServe(":80", nil)
 }
 
 func train(states [][][][]State, duration time.Duration) {
@@ -890,5 +763,5 @@ func train(states [][][][]State, duration time.Duration) {
 	train_ctx, _ := context.WithTimeout(context.Background(), duration)
 	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU(), train_ctx.Done())
 	//go print_values_async(states, train_ctx.Done())
-	serve_state_values(states)
+	NewServer(states).Serve()
 }
