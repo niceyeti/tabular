@@ -17,7 +17,9 @@ import (
 	"math/rand"
 	"net/http"
 	"runtime"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
@@ -214,9 +216,10 @@ func show_max_values(states [][][][]State) {
 		for x := range states {
 			velstates := states[x][y]
 			state := max_vel_state(velstates)
-			fmt.Printf("%.2f ", state.value)
+			val := atomicRead(&state.value)
+			fmt.Printf("%.2f ", val)
 			//fmt.Printf("%.2f%c ", state.value, put_max_dir(state))
-			total += state.value
+			total += val
 		}
 		fmt.Println("")
 	}
@@ -236,7 +239,8 @@ func show_avg_values(states [][][][]State) {
 			for i := 0; i < len(velstates); i++ {
 				// From 1, since states for which both velocity components are zero or negative are excluded by problem def.
 				for j := 1; j < len(velstates[i]); j++ {
-					avg += velstates[i][j].value
+					val := atomicRead(&velstates[i][j].value)
+					avg += val
 					n++
 				}
 			}
@@ -286,6 +290,7 @@ func max_vel_state(vel_states [][]State) (max_state *State) {
 	max_state = &State{
 		value: -math.MaxFloat64,
 	}
+	max_val := max_state.value
 
 	for vx := range vel_states {
 		for vy := range vel_states[vx] {
@@ -293,8 +298,11 @@ func max_vel_state(vel_states [][]State) (max_state *State) {
 				// Skip states whose velocity components are both zero, which are excluded by problem def.
 				continue
 			}
-			if vel_states[vx][vy].value > max_state.value {
+
+			val := atomicRead(&vel_states[vx][vy].value)
+			if val > max_val {
 				max_state = &vel_states[vx][vy]
+				max_val = val
 			}
 		}
 	}
@@ -304,7 +312,7 @@ func max_vel_state(vel_states [][]State) (max_state *State) {
 
 // Initializes the state values
 func init_state_values(states [][][][]State, value float64) {
-	visit(states, func(s *State) { s.value = value })
+	visit(states, func(s *State) { atomicSet(&s.value, value) })
 }
 
 // Visits every state using the passed function
@@ -527,7 +535,8 @@ func print_substates(states [][][][]State, x, y int) {
 	for vx := 0; vx < len(states[x][y]); vx++ {
 		for vy := 0; vy < len(states[x][y][vx]); vy++ {
 			s := states[x][y][vx][vy]
-			fmt.Printf(" (%d,%d) %.2f\n", s.vx, s.vy, s.value)
+			val := atomicRead(&s.value)
+			fmt.Printf(" (%d,%d) %.2f\n", s.vx, s.vy, val)
 		}
 	}
 }
@@ -550,8 +559,9 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 				continue
 			}
 
-			if successor.value > max_val {
-				max_val = successor.value
+			val := atomicRead(&successor.value)
+			if val > max_val {
+				max_val = val
 				target = successor
 				action = candidate_action
 			}
@@ -602,6 +612,13 @@ func alpha_mc_train_vanilla_parallel(
 
 			// Generate and send episodes until cancellation.
 			for {
+				// done-guard
+				select {
+				case <-done:
+					return
+				default:
+				}
+
 				episode := Episode{}
 				state := start_state_gen()
 				for !is_terminal(state) {
@@ -611,9 +628,9 @@ func alpha_mc_train_vanilla_parallel(
 						episode,
 						Step{
 							state:     state,
-							successor: successor,
 							action:    action,
 							reward:    reward,
+							successor: successor,
 						})
 					state = successor
 				}
@@ -622,13 +639,6 @@ func alpha_mc_train_vanilla_parallel(
 				case episodes <- &episode:
 				case <-done:
 					return
-				}
-
-				// done-guard
-				select {
-				case <-done:
-					return
-				default:
 				}
 			}
 		}()
@@ -639,7 +649,10 @@ func alpha_mc_train_vanilla_parallel(
 	// Fan in the workers to a single channel. This allows the processor to throttle the agents
 	// by not pulling episodes from their chans, which in turn pseudo-serializes matrix read/write.
 	// Note: the serialization is not robust or production worthy sans locking the state matrix.
-	// Chans provide a sufficient coordination mechanism for prototyping, but is not rigorous.
+	// Chans provide a sufficient coordination mechanism for prototyping, but is not rigorous (e.g.
+	// will fail builds with '-race' flag).
+	// TODO: locking algorithms or strategies for large resource space, where every item in the space
+	// feasibly requires a lock?
 	workers := []<-chan *Episode{}
 	for i := 0; i < nworkers; i++ {
 		ch := agent_worker(states, rand_restart, policy_alpha_max, done)
@@ -653,6 +666,7 @@ func alpha_mc_train_vanilla_parallel(
 
 	alpha := 0.1
 	gamma := 0.9
+	// Estimator updates state values from agent experiences.
 	estimator := func(
 		alpha, gamma float64,
 		hookFn func(int)) {
@@ -660,14 +674,16 @@ func alpha_mc_train_vanilla_parallel(
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
 			last_step := (*episode)[len(*episode)-1]
-			last_step.successor.value = last_step.reward
+			atomicSet(&last_step.successor.value, last_step.reward)
 			// Propagate rewards backward from terminal state per episode
 			reward := 0.0
 			for _, t := range rev(len(*episode)) {
 				// NOTE: not tracking states' is-visited status, so for now this is an every-visit MC implementation.
 				step := (*episode)[t]
 				reward += step.reward
-				step.state.value += (alpha * (reward - step.state.value))
+				val := atomicRead(&step.state.value)
+				delta := alpha * (reward - val)
+				atomicAdd(&step.state.value, delta)
 			}
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)
@@ -676,6 +692,41 @@ func alpha_mc_train_vanilla_parallel(
 		}
 	}
 	go estimator(alpha, gamma, progress_hook)
+}
+
+// Atomically read a float64.
+func atomicRead(val *float64) (value float64) {
+	return math.Float64frombits(atomic.LoadUint64((*uint64)(unsafe.Pointer(val))))
+}
+
+// Atomically adds a float64
+func atomicAdd(val *float64, addend float64) (new_val float64) {
+	for {
+		old := *val
+		new_val = old + addend
+		if atomic.CompareAndSwapUint64(
+			(*uint64)(unsafe.Pointer(val)),
+			math.Float64bits(old),
+			math.Float64bits(new_val),
+		) {
+			break
+		}
+	}
+	return
+}
+
+func atomicSet(val *float64, new_val float64) {
+	for {
+		old := *val
+		if atomic.CompareAndSwapUint64(
+			(*uint64)(unsafe.Pointer(val)),
+			math.Float64bits(old),
+			math.Float64bits(new_val),
+		) {
+			break
+		}
+	}
+	return
 }
 
 func step_str(step *Step) string {
@@ -760,7 +811,7 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][max_y-y-1] = Cell{
 			X: x, Y: y,
-			Max: max_vel_state(velstates).value,
+			Max: atomicRead(&max_vel_state(velstates).value),
 		}
 	})
 
@@ -796,7 +847,7 @@ func serve_state_values(states [][][][]State) {
 					{{ range $row := . }}
 						{{ range $cell := $row }}
 							<rect x="{{ mult $cell.X $cell_width }}px" y="{{ mult $cell.Y $cell_height }}px" width="{{ $cell_width }}px" height="{{ $cell_height }}px" fill="none" stroke="black" stroke-width="1px"/>
-							<text x="{{ sub (mult $cell.X $cell_width) $half_width }}px" y="{{ sub (mult $cell.Y $cell_height) $half_height }}px" stroke="blue">{{ $numcells }}</text>
+							<text x="{{ add (mult $cell.X $cell_width) $half_width }}px" y="{{ add (mult $cell.Y $cell_height) $half_height }}px" stroke="blue">{{ printf "%.2f" $cell.Max }}</text>
 						{{ end }}
 					{{ end }}
 					</svg>

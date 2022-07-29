@@ -1,0 +1,72 @@
+TLDR: what are efficient patterns for coordinating n goroutine updates to a large floating point matrix of m entries, i.e. where m >> n?
+This question applies to the general case where the number of critical resources (matrix entries) is much larger
+than the number of workers needing to synchronize access (e.g. ~NumCPU). Thus contention exists but is
+sparse, and putting a lock around every contended resource is wasteful or infeasible.
+
+For background, this is for parallelizing Monte Carlo and similar RL methods;
+Monte Carlo methods are specifically applicable to huge state spaces where m >> n.
+In many textbook examples like the classic 2d 'gridworld', matrix indices represent discrete states and matrix entries are state-value estimates.
+'Agents' (implemented as n goroutines) navigate the matrix
+and update the state values per visit or per episode, potentially stomping eachother's updates.
+Most of these algorithms can be guaranteed to converge despite such race conditions, but they would fail
+golang's '-race' build flag and allowing races feels fraught ("there is no such thing as a benign data race").
+
+Some spitball solutions:
+- Fine-grain locking (brute force): lock around every matrix entry.
+- Atomic updating: implement atomic float updates by casting them to uints
+
+I feel like I'm missing a more general approach, such as using a concurrent datastructure like a sync.Map.
+The number of locks seems like it should be tied to n, not m, for the general problem of synchronizing
+n goroutines' access to m resources; this is is what interests me about the problem.
+
+FWIW my first throwaway pass ignores races: start n agents and one 'estimator'. The agents generate episodes (matrix
+transition sequences) and send these via a chan to the estimator, which solely updates the matrix values.
+
+
+
+Assume you have a very large matrix with millions of entries and n workers, where n is small (e.g. ~NumCpu).
+Readers read a value from the matrix and transition to new location, until they reach a terminal location, generating a sequence of location+value pairs.
+Writers receive these sequences (via chan) and use them to update the values at each location in the matrix.
+But the gist is: you have n agents at random locations in the matrix (and they only read values),
+while elsewhere you have an updater sweeping through and updating the (visited) values of the matrix.
+
+
+
+
+- Brute-force fine-grain locking: lock every entry in the matrix
+- Atomicize operations: one could redefine the problem in integer space and thereby use the sync/atomic
+- Put all entries into a sync.Pool
+
+
+
+Writer:
+  - claim entry (i,j), update its value, release (i,j)
+Reader:
+  - is (i,j) free?
+    * yes: read it
+    * no: wait for it
+
+Observe: matrix indices probably map into a much smaller space of bits; for example, if the indices are ints, just concat them.
+Thus checking if a state is in use could be an ~O(1) operation.
+
+
+
+Data structure approach:
+    - Use bitmap? A bitvector may support up to 64 * 64
+        Writer:
+        - 
+
+    - Use sync.Map?
+        Writer:
+            * Put (i,j) in map, update it, remove it when done
+        Reader:
+            * Check if (i,j) in map:
+                - yes: wait for deletion
+                - no: continue/use it
+    - Use sync.Pool?
+        Writer:
+            * put (i,j) into sync.Pool
+        Reader:
+            * check for (i',j') in sync.Pool
+
+
