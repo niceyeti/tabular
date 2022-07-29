@@ -859,7 +859,7 @@ func serve_state_values(states [][][][]State) {
 									fill="none" 
 									stroke="black"
 									stroke-width="1px"/>
-								<text 
+								<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
 									x="{{ add (mult $cell.X $cell_width) $half_width }}px" 
 									y="{{ add (mult $cell.Y $cell_height) $half_height }}px" 
 									stroke="blue"
