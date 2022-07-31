@@ -658,7 +658,7 @@ func alpha_mc_train_vanilla_parallel(
 	}
 	episodes := channerics.Merge(done, workers...)
 
-	progress_hook := func(episode_count int) {
+	progress_hook := func(episode_count int, done <-chan struct{}) {
 		// TODO: copy and send the entire state matrix (policy, values, etc.) to update views...
 	}
 
@@ -667,7 +667,7 @@ func alpha_mc_train_vanilla_parallel(
 	// Estimator updates state values from agent experiences.
 	estimator := func(
 		alpha, gamma float64,
-		hookFn func(int)) {
+		hookFn func(int, <-chan struct{})) {
 		episode_count := 0
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
@@ -686,7 +686,7 @@ func alpha_mc_train_vanilla_parallel(
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)
 			episode_count++
-			hookFn(episode_count)
+			hookFn(episode_count, done)
 		}
 	}
 	go estimator(alpha, gamma, progress_hook)
@@ -740,6 +740,26 @@ func print_values_async(states [][][][]State, done <-chan struct{}) {
 	}
 }
 
+/*
+
+Inputs:
+- a world/racetrack and rewards system
+Outputs:
+- Optimized values and policy
+- Visualizations
+
+	app/
+		learning.go: all the RL stuff
+	server/
+		endpoints/
+			values_endpoints.go: the endpoints and templates for displaying values
+			action_values_endpoints.go
+		server.go: addr/port plus a method for assembling multiple components in a single page.
+	main.go: where all dependencies come together
+	go.mod
+	go.sum
+*/
+
 func main() {
 	rand.Seed(time.Now().Unix())
 
@@ -754,14 +774,16 @@ func main() {
 	// show max values
 	show_max_values(states)
 	show_grid(states)
-
 	train(states, time.Minute)
 }
 
 func train(states [][][][]State, duration time.Duration) {
 	fmt.Printf("Starting training for duration %v\n", duration)
 	train_ctx, _ := context.WithTimeout(context.Background(), duration)
-	alpha_mc_train_vanilla_parallel(states, runtime.NumCPU(), train_ctx.Done())
+	alpha_mc_train_vanilla_parallel(
+		states,
+		runtime.NumCPU(),
+		train_ctx.Done())
 	//go print_values_async(states, train_ctx.Done())
 	NewServer(states).Serve()
 }

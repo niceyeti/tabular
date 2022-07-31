@@ -62,8 +62,8 @@ type Cell struct {
 	Max  float64
 }
 
-// ViewSetter is an element identifier and a set of operations to apply to its attributes/content.
-type ViewSetter struct {
+// EleUpdate is an element identifier and a set of operations to apply to its attributes/content.
+type EleUpdate struct {
 	// The id by which to find the element
 	EleId string
 	// Op keys are attrib keys or 'textContent', values are the new strings to which these are set.
@@ -97,10 +97,10 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 }
 
 // Returns the set of view updates needed for the view to reflect the current values.
-func get_cell_updates(cells [][]Cell) (updates []ViewSetter) {
+func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 	for _, row := range cells {
 		for _, cell := range row {
-			updates = append(updates, ViewSetter{
+			updates = append(updates, EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
 				Ops: []Op{
 					{"textContent", fmt.Sprintf("%.2f", cell.Max)},
@@ -119,6 +119,14 @@ type Server struct {
 	// TODO: refactor to eliminate, replace with chan fed by hook fn training updates
 	states [][][][]State
 }
+
+/*
+Server: this server is a monolith. A pure server would abstract away the details of each
+visual component from some builder/factories for generating them (and their websockets),
+and would then simply coordinate them. This server instead has it all: knowledge of
+templates, converting models to view models, and bootstrapping web sockets.
+
+*/
 
 // TODO: refactor server to accept State chan for update notifications from training hook
 func NewServer(states [][][][]State) *Server {
@@ -193,6 +201,7 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 			"mult": func(i, j int) int { return i * j },
 			"div":  func(i, j int) int { return i / j },
 		})
+
 	var err error
 	if _, err = t.Parse(`<html>
 		<head>
@@ -204,6 +213,12 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 					console.log("Web socket opened")
 				};
 
+				// Listen for errors
+				ws.addEventListener('error', function (event) {
+					console.log('WebSocket error: ', event);
+				});
+
+				// The meat: when the server pushes view updates, find these eles and update them.
 				ws.onmessage = function (event) {
 					//console.log(event.data);
 					console.log("updating ui")
@@ -213,11 +228,9 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 					for (const update of items) {
 						const ele = values_ele.getElementById(update.EleId)
 						for (const op of update.Ops) {
-							console.log("Op: ", op)
 							if (op.Key === "textContent") {
 								ele.textContent = op.Value;
-							}
-							else {
+							} else {
 								ele.setAttribute(op.Key, op.Value)
 							}
 						}
