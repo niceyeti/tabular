@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"fmt"
@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	. "tabular/atomic_helpers"
+	. "tabular/models"
 
 	"github.com/gorilla/websocket"
 )
@@ -84,12 +87,12 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 		cells[x] = make([]Cell, max_y)
 	}
 
-	visit_xy_states(states, func(velstates [][]State) {
-		x, y := velstates[0][0].x, velstates[0][0].y
+	Visit_xy_states(states, func(velstates [][]State) {
+		x, y := velstates[0][0].X, velstates[0][0].Y
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
 			X: x, Y: max_y - y - 1,
-			Max: atomicRead(&max_vel_state(velstates).value),
+			Max: AtomicRead(&Max_vel_state(velstates).Value),
 		}
 	})
 
@@ -108,16 +111,13 @@ func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 			})
 		}
 	}
-
-	//b, _ := json.MarshalIndent(updates, " ", " ")
-	//fmt.Println(string(b))
-
 	return
 }
 
 type Server struct {
+	last_update [][][][]State
 	// TODO: refactor to eliminate, replace with chan fed by hook fn training updates
-	states [][][][]State
+	state_updates <-chan [][][][]State
 }
 
 /*
@@ -125,18 +125,18 @@ Server: this server is a monolith. A pure server would abstract away the details
 visual component from some builder/factories for generating them (and their websockets),
 and would then simply coordinate them. This server instead has it all: knowledge of
 templates, converting models to view models, and bootstrapping web sockets.
-
 */
 
 // TODO: refactor server to accept State chan for update notifications from training hook
-func NewServer(states [][][][]State) *Server {
+func NewServer(
+	initial_states [][][][]State,
+	state_updates <-chan [][][][]State) *Server {
 	return &Server{
-		states: states,
+		last_update:   initial_states,
+		state_updates: state_updates,
 	}
 }
 
-// TODO: once I get the gist of ownership, the server will be completely refactored.
-// states will not be passed but communicated (e.g. via chan), server will be in its own file, etc)
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serve_main)
 	http.HandleFunc("/ws", server.serve_websocket)
@@ -156,10 +156,11 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	// TODO: determine where closure belongs
 	defer server.closeWebsocket(ws)
 
-	for range time.Tick(time.Second * 2) {
+	// Watch for state updates and push them to the client.
+	for states := range server.state_updates {
 		fmt.Println("WS server tick")
 		_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
-		cells := convert_states_to_cells(server.states)
+		cells := convert_states_to_cells(states)
 		updates := get_cell_updates(cells)
 		if err := ws.WriteJSON(updates); err != nil {
 			panic(err)
@@ -192,8 +193,6 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("parsing...")
 	// Build the template, bind data
-	Cells := convert_states_to_cells(server.states)
-
 	t := template.New("state-values").Funcs(
 		template.FuncMap{
 			"add":  func(i, j int) int { return i + j },
@@ -279,7 +278,8 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = t.Execute(w, Cells); err != nil {
+	cells := convert_states_to_cells(server.last_update)
+	if err = t.Execute(w, cells); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}

@@ -1,4 +1,4 @@
-package main
+package atomic_helpers
 
 import (
 	"sync"
@@ -8,7 +8,6 @@ import (
 )
 
 func TestAtomicAdd(t *testing.T) {
-
 	Convey("When atomicAdd is called", t, func() {
 		Convey("When multiple writers add to the float value concurrently", func() {
 			f64 := float64(0.0)
@@ -19,7 +18,7 @@ func TestAtomicAdd(t *testing.T) {
 			wg.Add(num_writers)
 			adder := func() {
 				for i := 0; i < num_ops; i++ {
-					atomicAdd(&f64, 1.0)
+					AtomicAdd(&f64, 1.0)
 				}
 				wg.Done()
 			}
@@ -32,5 +31,4 @@ func TestAtomicAdd(t *testing.T) {
 			So(f64, ShouldEqual, float64(num_ops*num_writers))
 		})
 	})
-
 }
