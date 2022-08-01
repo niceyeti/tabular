@@ -146,6 +146,9 @@ func (server *Server) Serve() {
 }
 
 // serve_websocket publishes state updates to the client via websocket.
+// TODO: managing multiple websockets, when multiple pages open, etc. These scenarios.
+// This currently assumes this handler is hit only once, one client.
+// TODO: handle closure and failure paths for websocket.
 func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -161,19 +164,19 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 // training method. Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
 func (server *Server) publish_state_updates(ws *websocket.Conn) {
-	publish := func(updates []EleUpdate) <-chan struct{} {
-		done := make(chan struct{})
+	publish := func(updates []EleUpdate) <-chan error {
+		errchan := make(chan error)
 		go func() {
+			defer close(errchan)
 			if err := ws.WriteJSON(updates); err != nil {
-				fmt.Println(err)
+				errchan <- err
 			}
-			close(done)
 		}()
-		return done
+		return errchan
 	}
 	last_update_time := time.Now()
 	resolution := time.Millisecond * 200
-	var done <-chan struct{}
+	var done <-chan error
 
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max number of updates per second.
@@ -184,10 +187,14 @@ func (server *Server) publish_state_updates(ws *websocket.Conn) {
 			continue
 		}
 
-		// Await pending request completion before issuing a new one.
+		// Await pending publication before publishing a new one.
 		if done != nil {
 			select {
-			case <-done:
+			case err, isErr := <-done: // Okay for done to be nil.
+				if isErr {
+					fmt.Println(err)
+					return
+				}
 			default:
 				continue
 			}
@@ -196,7 +203,7 @@ func (server *Server) publish_state_updates(ws *websocket.Conn) {
 		last_update_time = time.Now()
 		if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 			fmt.Println(err)
-			continue
+			return
 		}
 
 		cells := convert_states_to_cells(states)
@@ -298,19 +305,25 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 					{{ range $cell := $row }}
 						<g>
 							<rect
-								x="{{ mult $cell.X $cell_width }}px" 
-								y="{{ mult $cell.Y $cell_height }}px"
-								width="{{ $cell_width }}px"
-								height="{{ $cell_height }}px" 
+								x="{{ mult $cell.X $cell_width }}" 
+								y="{{ mult $cell.Y $cell_height }}"
+								width="{{ $cell_width }}"
+								height="{{ $cell_height }}" 
 								fill="none"
 								stroke="black"
 								stroke-width="1"/>
 							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-								x="{{ add (mult $cell.X $cell_width) $half_width }}px" 
-								y="{{ add (mult $cell.Y $cell_height) $half_height }}px" 
+								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
+								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
 								stroke="blue"
-								dominant-baseline="middle" text-anchor="middle"
+								dominant-baseline="text-top" text-anchor="middle"
 								>{{ printf "%.2f" $cell.Max }}</text>
+							<text id="{{$cell.X}}-{{$cell.Y}}-action-arrow"
+								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
+								y="{{ add (mult $cell.Y $cell_height) (add $half_height 20)  }}" 
+								stroke="blue"
+								dominant-baseline="hanging" text-anchor="middle"
+								>&uarr;</text>
 						</g>
 					{{ end }}
 				{{ end }}
