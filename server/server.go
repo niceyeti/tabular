@@ -85,6 +85,31 @@ type Op struct {
 	Value string
 }
 
+type Server struct {
+	addr          string
+	last_update   [][][][]State
+	state_updates <-chan [][][][]State
+}
+
+/*
+Server: this server is a monolith. A pure server would abstract away the details of each
+visual component from some builder/factories for generating them (and their websockets),
+and would then simply coordinate them. This server instead has it all: knowledge of
+templates, converting models to view models, and bootstrapping web sockets.
+*/
+
+// TODO: refactor server to accept State chan for update notifications from training hook
+func NewServer(
+	addr string,
+	initial_states [][][][]State,
+	state_updates <-chan [][][][]State) *Server {
+	return &Server{
+		addr:          addr,
+		last_update:   initial_states,
+		state_updates: state_updates,
+	}
+}
+
 func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 	cells = make([][]Cell, len(states))
 	max_y := len(states[0])
@@ -147,28 +172,6 @@ func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 	return
 }
 
-type Server struct {
-	last_update   [][][][]State
-	state_updates <-chan [][][][]State
-}
-
-/*
-Server: this server is a monolith. A pure server would abstract away the details of each
-visual component from some builder/factories for generating them (and their websockets),
-and would then simply coordinate them. This server instead has it all: knowledge of
-templates, converting models to view models, and bootstrapping web sockets.
-*/
-
-// TODO: refactor server to accept State chan for update notifications from training hook
-func NewServer(
-	initial_states [][][][]State,
-	state_updates <-chan [][][][]State) *Server {
-	return &Server{
-		last_update:   initial_states,
-		state_updates: state_updates,
-	}
-}
-
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serve_main)
 	http.HandleFunc("/ws", server.serve_websocket)
@@ -186,6 +189,7 @@ func (server *Server) Serve() {
 func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Println("upgrade:", err)
 		return
 	}

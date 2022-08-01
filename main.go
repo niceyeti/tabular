@@ -27,11 +27,17 @@ var (
 	states          [][][][]State
 	dbg             *bool
 	nworkers        *int
+	host            *string
+	port            *string
+	addr            string
 )
 
 func init() {
 	dbg = flag.Bool("debug", false, "debug mode")
 	nworkers = flag.Int("nworkers", runtime.NumCPU(), "number of worker training routines")
+	host = flag.String("host", "", "The host ip")
+	port = flag.String("port", "8080", "The host port")
+	addr = *host + ":" + *port
 	flag.Parse()
 }
 
@@ -53,6 +59,7 @@ func runApp() {
 		context.TODO())
 	// TODO: read and pass in the addr and port
 	NewServer(
+		addr,
 		states,
 		state_snapshots,
 	).Serve()
