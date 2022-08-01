@@ -18,7 +18,7 @@ var upgrader = websocket.Upgrader{}
 
 const (
 	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
+	writeWait = 1 * time.Second
 	// Maximum message size allowed from peer.
 	maxMessageSize = 8192
 	// Time allowed to read the next pong message from the peer.
@@ -46,20 +46,20 @@ Task 0: serve a page and demonstrate server side push updates to it.
 Task 1: bind this info to the agent value function with mathematical transformation (e.g. color mapping or policy vectors)
 Task 3: add additional info (golang runtime telemetry, etc), Q(s,a) values
 
-Lessons learned: the requirement of serving a basic realtime visualization is satisfied by SSE, and has promising
-self-contained security considerations (runs entirely over http, may not consume as many connections). However
+Lessons learned: the requirement of serving a basic realtime visualization is satisfied by server side events (SSE), and has promising
+self-contained security considerations (runs entirely over http, may not consume as many connections, etc.). However
 I'm going with full-duplex websockets for a more expressive language to meet future requirements. The differences
 are not that significant, since this app only requires a small portion of websocket functionality at half-duplex.
 Summary: SSEs are great and modest, suitable to something like ads. But websockets are more expressive but connection heavy.
 */
 
-// Converts the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
+// Cell is for converting the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
 // oriented in svg coordinate system such that [0][0] is the logical cell that would
 // be printed in the console at top left. This purpose of [][]Cells is convenient
 // traversal and data for generating golang templates; otherwise one must implement
 // ugly template funcs to map the [][][][]State structure to views, which is tedious.
 // The purpose of Cell itself is to contain ephemeral descriptors (max action direction,
-// etc) useful for putting in the view.
+// etc) useful for putting in the view, and arbitrary calculated fields can be added as desired.
 type Cell struct {
 	X, Y int
 	Max  float64
@@ -69,12 +69,13 @@ type Cell struct {
 type EleUpdate struct {
 	// The id by which to find the element
 	EleId string
-	// Op keys are attrib keys or 'textContent', values are the new strings to which these are set.
+	// Op keys are attrib keys or 'textContent', values are the strings to which these are set.
 	// Example: ('x','123') means 'set attribute 'x' to 123. 'textContent' is a reserved key:
 	// ('textContent','abc') means 'set ele.textContent to abc'.
 	Ops []Op
 }
 
+// Op is a key and value. For example an attribute and a value to which it should be set.
 type Op struct {
 	Key   string
 	Value string
@@ -115,8 +116,7 @@ func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 }
 
 type Server struct {
-	last_update [][][][]State
-	// TODO: refactor to eliminate, replace with chan fed by hook fn training updates
+	last_update   [][][][]State
 	state_updates <-chan [][][][]State
 }
 
@@ -145,6 +145,7 @@ func (server *Server) Serve() {
 	_ = http.ListenAndServe(":8080", nil)
 }
 
+// serve_websocket publishes state updates to the client via websocket.
 func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -152,20 +153,55 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: this will be refactored to listen for updates from the training hook
-	// TODO: determine where closure belongs
 	defer server.closeWebsocket(ws)
+	server.publish_state_updates(ws)
+}
+
+// publish_state_updates watches for the publicaiton of new states by the
+// training method. Note that taking too long here could block senders on the
+// state chan; this will surely change as code develops, be mindful of upstream effects.
+func (server *Server) publish_state_updates(ws *websocket.Conn) {
+	publish := func(updates []EleUpdate) <-chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			if err := ws.WriteJSON(updates); err != nil {
+				fmt.Println(err)
+			}
+			close(done)
+		}()
+		return done
+	}
+	last_update_time := time.Now()
+	resolution := time.Millisecond * 200
+	var done <-chan struct{}
 
 	// Watch for state updates and push them to the client.
+	// Updates are published per a max number of updates per second.
 	for states := range server.state_updates {
-		fmt.Println("WS server tick")
-		_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
+		//fmt.Println("WS server tick")
+		// Drop updates when receiving them too quickly.
+		if time.Since(last_update_time) < resolution {
+			continue
+		}
+
+		// Await pending request completion before issuing a new one.
+		if done != nil {
+			select {
+			case <-done:
+			default:
+				continue
+			}
+		}
+
+		last_update_time = time.Now()
+		if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+			fmt.Println(err)
+			continue
+		}
+
 		cells := convert_states_to_cells(states)
 		updates := get_cell_updates(cells)
-		if err := ws.WriteJSON(updates); err != nil {
-			panic(err)
-			//break
-		}
+		done = publish(updates)
 	}
 }
 
@@ -199,12 +235,18 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 			"sub":  func(i, j int) int { return i - j },
 			"mult": func(i, j int) int { return i * j },
 			"div":  func(i, j int) int { return i / j },
+			"max": func(i, j int) int {
+				if i > j {
+					return i
+				}
+				return j
+			},
 		})
 
 	var err error
 	if _, err = t.Parse(`<html>
 		<head>
-			<!--This is the client bootstrap code by which the server pushes new data and loads it into the view via websocket.-->
+			<!--This is the client bootstrap code by which the server pushes new data to the view via websocket.-->
 			{{ $component_name := "value-function-svg" }}
 			<script>
 				const ws = new WebSocket("ws://localhost:8080/ws");
@@ -213,14 +255,13 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 				};
 
 				// Listen for errors
-				ws.addEventListener('error', function (event) {
+				ws.onerror = function (event) {
 					console.log('WebSocket error: ', event);
-				});
+				};
 
 				// The meat: when the server pushes view updates, find these eles and update them.
 				ws.onmessage = function (event) {
 					//console.log(event.data);
-					console.log("updating ui")
 					items = JSON.parse(event.data)
 					const values_ele = document.getElementById({{ $component_name }});
 					// Iterate the data updates
@@ -239,27 +280,31 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 		</head>
 		<body>
 		{{ $x_cells := len . }}
-		{{ $y_cells := len (index . 0)}}
-		{{ $width := 500 }}
-		{{ $cell_width := div $width $x_cells }}
-		{{ $height := mult $cell_width $y_cells }}
-		{{ $cell_height := $cell_width}}
+		{{ $y_cells := len (index . 0) }}
+		{{ $cell_width := 100 }}
+		{{ $cell_height := $cell_width }}
+		{{ $width :=  mult $cell_width $x_cells }}
+		{{ $height := mult $cell_height $y_cells }}
 		{{ $half_height := div $cell_height 2 }}
 		{{ $half_width := div $cell_width 2 }}
-		<div>Num cells: {{ $x_cells }} Y cells: {{ $y_cells}}</div>
+		<div>Num cells: {{ $x_cells }} Y cells: {{ $y_cells }}</div>
 			<div id="state_values">
-				<svg id="{{ $component_name }}" width="{{ $width }}px" height="{{ $height }}px">
+				<svg 
+					id="{{ $component_name }}"
+					width="{{ add $width 1 }}px"
+					height="{{ add $height 1 }}px"
+					style="shape-rendering: crispEdges;">
 				{{ range $row := . }}
 					{{ range $cell := $row }}
 						<g>
 							<rect
 								x="{{ mult $cell.X $cell_width }}px" 
-								y="{{ mult $cell.Y $cell_height }}px" 
-								width="{{ $cell_width }}px" 
+								y="{{ mult $cell.Y $cell_height }}px"
+								width="{{ $cell_width }}px"
 								height="{{ $cell_height }}px" 
-								fill="none" 
+								fill="none"
 								stroke="black"
-								stroke-width="1px"/>
+								stroke-width="1"/>
 							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
 								x="{{ add (mult $cell.X $cell_width) $half_width }}px" 
 								y="{{ add (mult $cell.Y $cell_height) $half_height }}px" 

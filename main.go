@@ -4,13 +4,18 @@ RL approaches to the race track problem, and visualize the properties of the tra
 (golang runtime telemetry, value function, error, etc). The RL is purely for personal review,
 not optimal implementation and behavior; these methods would be more descriptively written up in matrix
 form in Python. However this implementation leverages goroutines to maximize training, albeit
-modestly.
+modestly. RL is somewhat disagreeable toward code abstraction because coding pretty textbook
+algorithms always yields edgecases and a mixture of logical and mathematical issues. IOW,
+don't think too hard and go with procedural solutions. The goal is simply to show methods operating
+correctly, not research.
 */
 
 package main
 
 import (
 	"context"
+	"flag"
+	"runtime"
 
 	. "tabular/models"
 	. "tabular/reinforcement"
@@ -20,16 +25,31 @@ import (
 var (
 	state_snapshots chan [][][][]State = make(chan [][][][]State, 0)
 	states          [][][][]State
+	dbg             *bool
+	nworkers        *int
 )
 
-func run() {
+func init() {
+	dbg = flag.Bool("debug", false, "debug mode")
+	nworkers = flag.Int("nworkers", runtime.NumCPU(), "number of worker training routines")
+	flag.Parse()
+}
+
+func selectTrack() []string {
 	// choose/input a track
-	racetrack := Debug_track
-	// convert to state space
+	if *dbg {
+		return DebugTrack
+	}
+	return FullTrack
+}
+
+func runApp() {
+	racetrack := selectTrack()
 	states = Convert(racetrack)
 	Train(
 		states,
-		export_states,
+		*nworkers,
+		exportStates,
 		context.TODO())
 	// TODO: read and pass in the addr and port
 	NewServer(
@@ -40,14 +60,13 @@ func run() {
 
 // When called during training progress, this blocks and sends the current
 // state values to the server to update views.
-func export_states(episode_count int, done <-chan struct{}) {
-	if episode_count%100 == 1 {
+func exportStates(episode_count int, done <-chan struct{}) {
+	if episode_count%1000 == 1 {
 		select {
 		case state_snapshots <- states:
 		case <-done:
 		}
 	}
-	return
 }
 
 /*
@@ -63,8 +82,5 @@ func print_values_async(states [][][][]State, done <-chan struct{}) {
 */
 
 func main() {
-	// read the --debug flag, others
-	// start training
-	// start server
-	run()
+	runApp()
 }

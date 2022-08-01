@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime"
 	"time"
 
 	. "tabular/atomic_helpers"
@@ -246,6 +245,7 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 // Train is async and initializes states and policies and begins training.
 func Train(
 	states [][][][]State,
+	nworkers int,
 	progress_fn func(int, <-chan struct{}),
 	ctx context.Context) {
 	// initialize the state values to something slightly larger than the lowest reward, for stability
@@ -257,7 +257,7 @@ func Train(
 	Show_grid(states)
 	alpha_mc_train_vanilla_parallel(
 		states,
-		runtime.NumCPU(),
+		nworkers,
 		progress_fn,
 		ctx.Done())
 }

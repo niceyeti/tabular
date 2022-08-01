@@ -58,7 +58,7 @@ const (
 
 // The classical track and a smaller debug track for development.
 var (
-	Debug_track []string = []string{
+	DebugTrack []string = []string{
 		"WWWWWW",
 		"Woooo+",
 		"Woooo+",
@@ -69,7 +69,7 @@ var (
 		"W--WWW",
 	}
 
-	Full_track []string = []string{
+	FullTrack []string = []string{
 		"WWWWWWWWWWWWWWWWWW",
 		"WWWWooooooooooooo+",
 		"WWWoooooooooooooo+",
@@ -104,7 +104,6 @@ var (
 		"WWWWooooooWWWWWWWW",
 		"WWWW------WWWWWWWW",
 	}
-	Track = Debug_track
 )
 
 // Converts a tack input string array to an actual state grid of positions and velocities.
