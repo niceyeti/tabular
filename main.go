@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	state_snapshots chan [][][][]State = make(chan [][][][]State, 0)
+	state_snapshots chan [][][][]State = make(chan [][][][]State)
 	states          [][][][]State
 	dbg             *bool
 	nworkers        *int

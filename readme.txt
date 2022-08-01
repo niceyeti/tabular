@@ -140,6 +140,12 @@ Multiple solutions:
     * 
 
     "Given this ele id, 1) replace existing 2) update its attributes"
+2) Further abstraction: server side virtual domming. On the server, maintain the current dom
+string (or model). When updates occur, 'parse the diff', either by straight string diff or via
+a model of the dom. The output of this diff (a formal language) is a set of operations (deltas) 
+to push to the client. Something like this seems interesting, however one might alter the details.
+The gist is that you would have a fully generic dom description, and deltas could be parsed out and
+sent to the client to alter only those parts of the dom.
 
 
 The core question is when X changes on the server, what ele should be updated and how should it be updated?
