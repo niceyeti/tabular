@@ -195,12 +195,6 @@ func is_terminal(state *State) bool {
 	return state.CellType == WALL || state.CellType == FINISH
 }
 
-// A 'live' state is one for which displaying the policy is relevant information,
-// e.g. is not an unreachable or invalid state.
-func is_live(state *State) bool {
-	return state.CellType != WALL
-}
-
 // For a fixed grid position, print all of its velocity subvalues.
 func print_substates(states [][][][]State, x, y int) {
 	fmt.Printf("Velocity vals for cell (%d,%d)\n", x, y)
@@ -341,7 +335,6 @@ func alpha_mc_train_vanilla_parallel(
 				}
 			}
 		}()
-
 		return episodes
 	}
 
