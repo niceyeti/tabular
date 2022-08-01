@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -58,11 +59,14 @@ Summary: SSEs are great and modest, suitable to something like ads. But websocke
 // be printed in the console at top left. This purpose of [][]Cells is convenient
 // traversal and data for generating golang templates; otherwise one must implement
 // ugly template funcs to map the [][][][]State structure to views, which is tedious.
+// As a rule of thumb, Cell fields should be immediately usable as view parameters.
 // The purpose of Cell itself is to contain ephemeral descriptors (max action direction,
 // etc) useful for putting in the view, and arbitrary calculated fields can be added as desired.
 type Cell struct {
-	X, Y int
-	Max  float64
+	X, Y                int
+	Max                 float64
+	PolicyArrowRotation int
+	PolicyArrowScale    int
 }
 
 // EleUpdate is an element identifier and a set of operations to apply to its attributes/content.
@@ -90,24 +94,52 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 
 	Visit_xy_states(states, func(velstates [][]State) {
 		x, y := velstates[0][0].X, velstates[0][0].Y
+		maxState := Max_vel_state(velstates)
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
 			X: x, Y: max_y - y - 1,
-			Max: AtomicRead(&Max_vel_state(velstates).Value),
+			Max:                 AtomicRead(&maxState.Value),
+			PolicyArrowRotation: getDegrees(maxState),
+			PolicyArrowScale:    getScale(maxState),
 		}
 	})
-
 	return
+}
+
+func getScale(state *State) int {
+	return int(math.Hypot(float64(state.VX), float64(state.VY)))
+}
+
+// getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
+// to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
+func getDegrees(state *State) int {
+	if state.VX == 0 && state.VY == 0 {
+		return 0
+	}
+	rad := math.Atan2(float64(state.VY), float64(state.VX))
+	deg := rad * 180 / math.Pi
+	// deg is correct in cartesian space, but must be subtracted from 90 for rotation in svg coors
+	return int(90 - deg)
 }
 
 // Returns the set of view updates needed for the view to reflect the current values.
 func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 	for _, row := range cells {
 		for _, cell := range row {
+			// Update the value text
 			updates = append(updates, EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
 				Ops: []Op{
 					{"textContent", fmt.Sprintf("%.2f", cell.Max)},
+				},
+			})
+			// Update the policy arrow indicators
+			updates = append(updates, EleUpdate{
+				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
+				Ops: []Op{
+					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
+					{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
+					{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
 				},
 			})
 		}
@@ -142,7 +174,9 @@ func (server *Server) Serve() {
 	http.HandleFunc("/ws", server.serve_websocket)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
 	// the port number to connect to the web socket.
-	_ = http.ListenAndServe(":8080", nil)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Println(err)
+	}
 }
 
 // serve_websocket publishes state updates to the client via websocket.
@@ -318,12 +352,13 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 								stroke="blue"
 								dominant-baseline="text-top" text-anchor="middle"
 								>{{ printf "%.2f" $cell.Max }}</text>
-							<text id="{{$cell.X}}-{{$cell.Y}}-action-arrow"
-								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
-								y="{{ add (mult $cell.Y $cell_height) (add $half_height 20)  }}" 
-								stroke="blue"
-								dominant-baseline="hanging" text-anchor="middle"
+							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
+								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+								stroke="blue" stroke-width="1"
+								dominant-baseline="central" text-anchor="middle"
+								transform="rotate({{ $cell.PolicyArrowRotation }})"
 								>&uarr;</text>
+							</g>
 						</g>
 					{{ end }}
 				{{ end }}
