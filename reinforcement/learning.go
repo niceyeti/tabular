@@ -16,7 +16,7 @@ import (
 	"math/rand"
 	"time"
 
-	. "tabular/atomic_helpers"
+	"tabular/atomic_float"
 	. "tabular/models"
 
 	channerics "github.com/niceyeti/channerics/channels"
@@ -201,7 +201,7 @@ func print_substates(states [][][][]State, x, y int) {
 	for vx := 0; vx < len(states[x][y]); vx++ {
 		for vy := 0; vy < len(states[x][y][vx]); vy++ {
 			s := states[x][y][vx][vy]
-			val := AtomicRead(&s.Value)
+			val := atomic_float.AtomicRead(&s.Value)
 			fmt.Printf(" (%d,%d) %.2f\n", s.VX, s.VY, val)
 		}
 	}
@@ -225,7 +225,7 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 				continue
 			}
 
-			val := AtomicRead(&successor.Value)
+			val := atomic_float.AtomicRead(&successor.Value)
 			if val > max_val {
 				max_val = val
 				target = successor
@@ -362,16 +362,16 @@ func alpha_mc_train_vanilla_parallel(
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
 			last_step := (*episode)[len(*episode)-1]
-			AtomicSet(&last_step.Successor.Value, last_step.Reward)
+			atomic_float.AtomicSet(&last_step.Successor.Value, last_step.Reward)
 			// Propagate rewards backward from terminal state per episode
 			reward := 0.0
 			for _, t := range Rev(len(*episode)) {
 				// NOTE: not tracking states' is-visited status, so for now this is an every-visit MC implementation.
 				step := (*episode)[t]
 				reward += step.Reward
-				val := AtomicRead(&step.State.Value)
+				val := atomic_float.AtomicRead(&step.State.Value)
 				delta := alpha * (reward - val)
-				AtomicAdd(&step.State.Value, delta)
+				atomic_float.AtomicAdd(&step.State.Value, delta)
 			}
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)

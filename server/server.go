@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	. "tabular/atomic_helpers"
-	. "tabular/models"
+	"tabular/atomic_float"
+	"tabular/models"
 
 	"github.com/gorilla/websocket"
 )
@@ -87,8 +87,8 @@ type Op struct {
 
 type Server struct {
 	addr          string
-	last_update   [][][][]State
-	state_updates <-chan [][][][]State
+	last_update   [][][][]models.State
+	state_updates <-chan [][][][]models.State
 }
 
 /*
@@ -101,8 +101,8 @@ templates, converting models to view models, and bootstrapping web sockets.
 // TODO: refactor server to accept State chan for update notifications from training hook
 func NewServer(
 	addr string,
-	initial_states [][][][]State,
-	state_updates <-chan [][][][]State) *Server {
+	initial_states [][][][]models.State,
+	state_updates <-chan [][][][]models.State) *Server {
 	return &Server{
 		addr:          addr,
 		last_update:   initial_states,
@@ -110,20 +110,20 @@ func NewServer(
 	}
 }
 
-func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
+func convert_states_to_cells(states [][][][]models.State) (cells [][]Cell) {
 	cells = make([][]Cell, len(states))
 	max_y := len(states[0])
 	for x := range states {
 		cells[x] = make([]Cell, max_y)
 	}
 
-	Visit_xy_states(states, func(velstates [][]State) {
+	models.Visit_xy_states(states, func(velstates [][]models.State) {
 		x, y := velstates[0][0].X, velstates[0][0].Y
-		maxState := Max_vel_state(velstates)
+		maxState := models.Max_vel_state(velstates)
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
 			X: x, Y: max_y - y - 1,
-			Max:                 AtomicRead(&maxState.Value),
+			Max:                 atomic_float.AtomicRead(&maxState.Value),
 			PolicyArrowRotation: getDegrees(maxState),
 			PolicyArrowScale:    getScale(maxState),
 		}
@@ -131,13 +131,13 @@ func convert_states_to_cells(states [][][][]State) (cells [][]Cell) {
 	return
 }
 
-func getScale(state *State) int {
+func getScale(state *models.State) int {
 	return int(math.Hypot(float64(state.VX), float64(state.VY)))
 }
 
 // getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
 // to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
-func getDegrees(state *State) int {
+func getDegrees(state *models.State) int {
 	if state.VX == 0 && state.VY == 0 {
 		return 0
 	}
@@ -175,6 +175,7 @@ func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serve_main)
 	http.HandleFunc("/ws", server.serve_websocket)
+	//http.HandleFunc("/profile", pprof.Profile)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
 	// the port number to connect to the web socket.
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -289,8 +290,10 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 		})
 
 	var err error
-	if _, err = t.Parse(`<html>
+	if _, err = t.Parse(`<!DOCTYPE html>
+	<html>
 		<head>
+			<link rel="icon" href="data:,">
 			<!--This is the client bootstrap code by which the server pushes new data to the view via websocket.-->
 			{{ $component_name := "value-function-svg" }}
 			<script>
@@ -306,7 +309,6 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 
 				// The meat: when the server pushes view updates, find these eles and update them.
 				ws.onmessage = function (event) {
-					//console.log(event.data);
 					items = JSON.parse(event.data)
 					const values_ele = document.getElementById({{ $component_name }});
 					// Iterate the data updates

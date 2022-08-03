@@ -1,4 +1,4 @@
-package atomic_helpers
+package atomic_float
 
 import (
 	"sync"

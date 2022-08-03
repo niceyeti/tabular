@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	. "tabular/atomic_helpers"
+	"tabular/atomic_float"
 )
 
 // The state consists of the position and current x/y velocity.
@@ -208,7 +208,7 @@ func Show_max_values(states [][][][]State) {
 		for x := range states {
 			velstates := states[x][y]
 			state := Max_vel_state(velstates)
-			val := AtomicRead(&state.Value)
+			val := atomic_float.AtomicRead(&state.Value)
 			fmt.Printf("%.2f ", val)
 			//fmt.Printf("%.2f%c ", state.value, put_max_dir(state))
 			total += val
@@ -231,7 +231,7 @@ func Show_avg_values(states [][][][]State) {
 			for i := 0; i < len(velstates); i++ {
 				// From 1, since states for which both velocity components are zero or negative are excluded by problem def.
 				for j := 1; j < len(velstates[i]); j++ {
-					val := AtomicRead(&velstates[i][j].Value)
+					val := atomic_float.AtomicRead(&velstates[i][j].Value)
 					avg += val
 					n++
 				}
@@ -291,7 +291,7 @@ func Max_vel_state(vel_states [][]State) (max_state *State) {
 				continue
 			}
 
-			val := AtomicRead(&vel_states[vx][vy].Value)
+			val := atomic_float.AtomicRead(&vel_states[vx][vy].Value)
 			if val > max_val {
 				max_state = &vel_states[vx][vy]
 				max_val = val
