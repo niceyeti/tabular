@@ -98,7 +98,6 @@ and would then simply coordinate them. This server instead has it all: knowledge
 templates, converting models to view models, and bootstrapping web sockets.
 */
 
-// TODO: refactor server to accept State chan for update notifications from training hook
 func NewServer(
 	addr string,
 	initial_states [][][][]models.State,
@@ -199,8 +198,9 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	server.publish_state_updates(ws)
 }
 
-// publish_state_updates watches for the publicaiton of new states by the
-// training method. Note that taking too long here could block senders on the
+// publish_state_updates transforms state updates from the training method into
+// view updates sent to the client.
+// Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
 func (server *Server) publish_state_updates(ws *websocket.Conn) {
 	publish := func(updates []EleUpdate) <-chan error {
@@ -229,7 +229,7 @@ func (server *Server) publish_state_updates(ws *websocket.Conn) {
 		// Await pending publication before publishing a new one.
 		if done != nil {
 			select {
-			case err, isErr := <-done: // Okay for done to be nil.
+			case err, isErr := <-done:
 				if isErr {
 					fmt.Println(err)
 					return
@@ -263,6 +263,19 @@ func (server *Server) closeWebsocket(ws *websocket.Conn) {
 // TODO: cleanup template and its ownership
 // FUTURE: it would be a fun problem to solve to devise a robust way to serve multiple
 // ui subcomponents (value function, policy visual, etc) and assemble them as one.
+/*
+Each component:
+	- has-a static template in which it embeds its initial parameters
+	- receives latest states and generates update ops
+
+	Methods:
+	Template([]Cell) (*t.Template, error)
+	Update(states [][][][]State) ([]Op)
+
+
+
+
+*/
 func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
@@ -272,6 +285,8 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	w.Header().Set("Content-Type", "text/html")
 
 	fmt.Println("parsing...")
 	// Build the template, bind data
