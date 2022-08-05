@@ -269,8 +269,8 @@ Each component:
 	- receives latest states and generates update ops
 
 	Methods:
-	Template([]Cell) (*t.Template, error)
-	Update(states [][][][]State) ([]Op)
+	Template([][]Cell) (*t.Template, error)
+	Update(states [][]Cell) ([]Op)
 
 
 
@@ -341,48 +341,46 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 			</script>
 		</head>
 		<body>
-		{{ $x_cells := len . }}
-		{{ $y_cells := len (index . 0) }}
-		{{ $cell_width := 100 }}
-		{{ $cell_height := $cell_width }}
-		{{ $width :=  mult $cell_width $x_cells }}
-		{{ $height := mult $cell_height $y_cells }}
-		{{ $half_height := div $cell_height 2 }}
-		{{ $half_width := div $cell_width 2 }}
-		<div>Num cells: {{ $x_cells }} Y cells: {{ $y_cells }}</div>
 			<div id="state_values">
-				<svg 
-					id="{{ $component_name }}"
+				{{ $x_cells := len . }}
+				{{ $y_cells := len (index . 0) }}
+				{{ $cell_width := 100 }}
+				{{ $cell_height := $cell_width }}
+				{{ $width :=  mult $cell_width $x_cells }}
+				{{ $height := mult $cell_height $y_cells }}
+				{{ $half_height := div $cell_height 2 }}
+				{{ $half_width := div $cell_width 2 }}
+				<svg id="{{ $component_name }}"
 					width="{{ add $width 1 }}px"
 					height="{{ add $height 1 }}px"
 					style="shape-rendering: crispEdges;">
-				{{ range $row := . }}
-					{{ range $cell := $row }}
-						<g>
-							<rect
-								x="{{ mult $cell.X $cell_width }}" 
-								y="{{ mult $cell.Y $cell_height }}"
-								width="{{ $cell_width }}"
-								height="{{ $cell_height }}" 
-								fill="none"
-								stroke="black"
-								stroke-width="1"/>
-							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
-								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
-								stroke="blue"
-								dominant-baseline="text-top" text-anchor="middle"
-								>{{ printf "%.2f" $cell.Max }}</text>
-							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
-								stroke="blue" stroke-width="1"
-								dominant-baseline="central" text-anchor="middle"
-								transform="rotate({{ $cell.PolicyArrowRotation }})"
-								>&uarr;</text>
+					{{ range $row := . }}
+						{{ range $cell := $row }}
+							<g>
+								<rect
+									x="{{ mult $cell.X $cell_width }}" 
+									y="{{ mult $cell.Y $cell_height }}"
+									width="{{ $cell_width }}"
+									height="{{ $cell_height }}" 
+									fill="none"
+									stroke="black"
+									stroke-width="1"/>
+								<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
+									x="{{ add (mult $cell.X $cell_width) $half_width }}" 
+									y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
+									stroke="blue"
+									dominant-baseline="text-top" text-anchor="middle"
+									>{{ printf "%.2f" $cell.Max }}</text>
+								<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
+									<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+									stroke="blue" stroke-width="1"
+									dominant-baseline="central" text-anchor="middle"
+									transform="rotate({{ $cell.PolicyArrowRotation }})"
+									>&uarr;</text>
+								</g>
 							</g>
-						</g>
+						{{ end }}
 					{{ end }}
-				{{ end }}
 				</svg>
 			</div>
 		</body>
