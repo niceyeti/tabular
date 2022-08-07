@@ -89,6 +89,7 @@ type Server struct {
 	addr          string
 	last_update   [][][][]models.State
 	state_updates <-chan [][][][]models.State
+	views         []ViewComponent
 }
 
 /*
@@ -102,11 +103,99 @@ func NewServer(
 	addr string,
 	initial_states [][][][]models.State,
 	state_updates <-chan [][][][]models.State) *Server {
+
 	return &Server{
 		addr:          addr,
 		last_update:   initial_states,
 		state_updates: state_updates,
+		views: []ViewComponent{
+			NewValuesGrid("values"),
+		},
 	}
+}
+
+type ViewComponent interface {
+	Template() (*template.Template, error)
+	Update([][]Cell) []EleUpdate
+}
+
+type ValuesGrid struct {
+	name string
+}
+
+func NewValuesGrid(name string) *ValuesGrid {
+	return &ValuesGrid{name}
+}
+
+func (vg *ValuesGrid) Template() (t *template.Template, err error) {
+	return template.New("values-grid").Parse(
+		`<div id="state_values">
+			{{ $x_cells := len . }}
+			{{ $y_cells := len (index . 0) }}
+			{{ $cell_width := 100 }}
+			{{ $cell_height := $cell_width }}
+			{{ $width :=  mult $cell_width $x_cells }}
+			{{ $height := mult $cell_height $y_cells }}
+			{{ $half_height := div $cell_height 2 }}
+			{{ $half_width := div $cell_width 2 }}
+			<svg id="{{ $component_name }}"
+				width="{{ add $width 1 }}px"
+				height="{{ add $height 1 }}px"
+				style="shape-rendering: crispEdges;">
+				{{ range $row := . }}
+					{{ range $cell := $row }}
+						<g>
+							<rect
+								x="{{ mult $cell.X $cell_width }}" 
+								y="{{ mult $cell.Y $cell_height }}"
+								width="{{ $cell_width }}"
+								height="{{ $cell_height }}" 
+								fill="none"
+								stroke="black"
+								stroke-width="1"/>
+							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
+								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
+								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
+								stroke="blue"
+								dominant-baseline="text-top" text-anchor="middle"
+								>{{ printf "%.2f" $cell.Max }}</text>
+							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
+								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+								stroke="blue" stroke-width="1"
+								dominant-baseline="central" text-anchor="middle"
+								transform="rotate({{ $cell.PolicyArrowRotation }})"
+								>&uarr;</text>
+							</g>
+						</g>
+					{{ end }}
+				{{ end }}
+			</svg>
+		</div>`)
+}
+
+// Returns the set of view updates needed for the view to reflect the current values.
+func (vg *ValuesGrid) Update(cells [][]Cell) (ops []EleUpdate) {
+	for _, row := range cells {
+		for _, cell := range row {
+			// Update the value text
+			ops = append(ops, EleUpdate{
+				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
+				Ops: []Op{
+					{"textContent", fmt.Sprintf("%.2f", cell.Max)},
+				},
+			})
+			// Update the policy arrow indicators
+			ops = append(ops, EleUpdate{
+				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
+				Ops: []Op{
+					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
+					{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
+					{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
+				},
+			})
+		}
+	}
+	return
 }
 
 func convert_states_to_cells(states [][][][]models.State) (cells [][]Cell) {
@@ -172,7 +261,7 @@ func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
 }
 
 func (server *Server) Serve() {
-	http.HandleFunc("/", server.serve_main)
+	http.HandleFunc("/", server.serve_index)
 	http.HandleFunc("/ws", server.serve_websocket)
 	//http.HandleFunc("/profile", pprof.Profile)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
@@ -269,14 +358,14 @@ Each component:
 	- receives latest states and generates update ops
 
 	Methods:
-	Template([][]Cell) (*t.Template, error)
-	Update(states [][]Cell) ([]Op)
+	Template([][]Cell) (*t.Template, error) // The initial template of the component, given the cells
+	Update(states [][]Cell) ([]Op)  // Notify of the latest cell values and get updates
 
 
 
 
 */
-func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
+func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
@@ -289,23 +378,44 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
 	fmt.Println("parsing...")
-	// Build the template, bind data
-	t := template.New("state-values").Funcs(
-		template.FuncMap{
-			"add":  func(i, j int) int { return i + j },
-			"sub":  func(i, j int) int { return i - j },
-			"mult": func(i, j int) int { return i * j },
-			"div":  func(i, j int) int { return i / j },
-			"max": func(i, j int) int {
-				if i > j {
-					return i
-				}
-				return j
-			},
-		})
+	// Build the template, bind data.
+	// TODO: note the child-template dependency on the func map. Also see the note about the
+	// recursive relationships of the views/templates. The same seems to apply here, whereby
+	// the func-map could be passed down recursively to child components.
+	func_map := template.FuncMap{
+		"add":  func(i, j int) int { return i + j },
+		"sub":  func(i, j int) int { return i - j },
+		"mult": func(i, j int) int { return i * j },
+		"div":  func(i, j int) int { return i / j },
+		"max": func(i, j int) int {
+			if i > j {
+				return i
+			}
+			return j
+		},
+	}
+	t := template.New("index-html").Funcs(func_map)
 
-	var err error
-	if _, err = t.Parse(`<!DOCTYPE html>
+	view_templates := []*template.Template{}
+	for _, vc := range server.views {
+		if vt, err := vc.Template(); err != nil {
+			panic(err)
+		} else {
+			vt = vt.Funcs(func_map)
+			view_templates = append(view_templates, vt)
+			// TODO: clean error handling
+			if t, err = t.AddParseTree(vt.Name(), vt.Tree); err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	// TODO: isn't there recursive relationship here wrt to writers of the textual part of the templates?
+	// So for instance each could pass down an io.Writer to build there portion of the tree, with parents
+	// defining the layout of their children to some degree.
+
+	// The main template bootstraps the rest: sets up client websocket and updates, aggregates views.
+	main_template := `<!DOCTYPE html>
 	<html>
 		<head>
 			<link rel="icon" href="data:,">
@@ -325,10 +435,11 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 				// The meat: when the server pushes view updates, find these eles and update them.
 				ws.onmessage = function (event) {
 					items = JSON.parse(event.data)
-					const values_ele = document.getElementById({{ $component_name }});
+					// FUTURE: scope the updates per view. Not really needed now, just grab them by id from doc level.
+					//const values_ele = document.getElementById({{ $component_name }});
 					// Iterate the data updates
 					for (const update of items) {
-						const ele = values_ele.getElementById(update.EleId)
+						const ele = document.getElementById(update.EleId)
 						for (const op of update.Ops) {
 							if (op.Key === "textContent") {
 								ele.textContent = op.Value;
@@ -341,51 +452,19 @@ func (server *Server) serve_main(w http.ResponseWriter, r *http.Request) {
 			</script>
 		</head>
 		<body>
-			<div id="state_values">
-				{{ $x_cells := len . }}
-				{{ $y_cells := len (index . 0) }}
-				{{ $cell_width := 100 }}
-				{{ $cell_height := $cell_width }}
-				{{ $width :=  mult $cell_width $x_cells }}
-				{{ $height := mult $cell_height $y_cells }}
-				{{ $half_height := div $cell_height 2 }}
-				{{ $half_width := div $cell_width 2 }}
-				<svg id="{{ $component_name }}"
-					width="{{ add $width 1 }}px"
-					height="{{ add $height 1 }}px"
-					style="shape-rendering: crispEdges;">
-					{{ range $row := . }}
-						{{ range $cell := $row }}
-							<g>
-								<rect
-									x="{{ mult $cell.X $cell_width }}" 
-									y="{{ mult $cell.Y $cell_height }}"
-									width="{{ $cell_width }}"
-									height="{{ $cell_height }}" 
-									fill="none"
-									stroke="black"
-									stroke-width="1"/>
-								<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-									x="{{ add (mult $cell.X $cell_width) $half_width }}" 
-									y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
-									stroke="blue"
-									dominant-baseline="text-top" text-anchor="middle"
-									>{{ printf "%.2f" $cell.Max }}</text>
-								<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-									<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
-									stroke="blue" stroke-width="1"
-									dominant-baseline="central" text-anchor="middle"
-									transform="rotate({{ $cell.PolicyArrowRotation }})"
-									>&uarr;</text>
-								</g>
-							</g>
-						{{ end }}
-					{{ end }}
-				</svg>
-			</div>
+		`
+	for _, vt := range view_templates {
+		// Specify the nested template and pass in its params
+		main_template += "{{ template " + vt.Name() + " . }}"
+	}
+
+	main_template += `
 		</body>
 	</html>
-	`); err != nil {
+	`
+
+	var err error
+	if t, err = t.Parse(main_template); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}

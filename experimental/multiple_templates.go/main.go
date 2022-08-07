@@ -7,10 +7,10 @@ import (
 )
 
 /*
-	A small example of generating a single index.html web page from nested
-	templates. This addresses the problem of assembling a single page from multiple
-	sub-components, such as assembling multiple svg view components for the same
-	incoming data. This allows organizing templates separately for better decomposition.
+A small example of generating a single index.html web page from nested
+templates. This addresses the problem of assembling a single page from multiple
+sub-components, such as assembling multiple svg view components for the same
+incoming data. This allows organizing templates separately for better decomposition.
 */
 func main() {
 	// Example 1: generate a single template from multiple templates, per the cross-references
