@@ -371,7 +371,9 @@ func alpha_mc_train_vanilla_parallel(
 				reward += step.Reward
 				val := atomic_float.AtomicRead(&step.State.Value)
 				delta := alpha * (reward - val)
-				atomic_float.AtomicAdd(&step.State.Value, delta)
+				// Note: intentionally discard rejected deltas. There won't be any, since add ops are serialized
+				// as there is a single estimator.
+				_, _ = atomic_float.AtomicAdd(&step.State.Value, delta)
 			}
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)

@@ -1,12 +1,39 @@
-TLDR: what are efficient patterns for coordinating n goroutine updates to a large floating point matrix of m entries, i.e. where m >> n?
-This question applies to the general case where the number of critical resources (matrix entries) is much larger
-than the number of workers needing to synchronize access (e.g. ~NumCPU). Thus contention exists but is
-sparse, and putting a lock around every contended resource is wasteful or infeasible.
+TLDR: what are concurrency patterns for coordinating n goroutine updates to a large matrix of m entries, i.e. where m >> n?
+The general problem is whenever number of critical resources (matrix entries) significantly exceeds
+the number of workers (e.g. n = NumCPU). Thus contention is
+sparse, but locking around every contended item is wasteful or infeasible. No ordering of
+access to matrix entries is assumed; workers can access entries randomly.
+The matrix size is fixed at runtime and the entries are structs, but contention is over float64 struct entries.
 
-For background, this is for parallelizing Monte Carlo and similar RL methods;
-Monte Carlo methods are specifically applicable to huge state spaces where m >> n.
+One solution uses atomic ops: cast *float64 to *uint in order to leverage sync/atomic operations for all
+reads/writes. This works fine for my case, and could be encapsulated in an AtomicFloat64 type.
+But I'm curious about solving the more general case of a large, fixed data structure (for which the sync/atomic
+approach is not possible). Getting into the weeds, the critical values are really the n numbers (matrix position) of each
+worker; thus the problem reduces to ensuring the uniqueness of n integers. Log(m) locks
+is possible if one hashed the matrix indices to a smaller set of locks. Is there instead a 
+CSP-style pattern for communicating instead of locking?
+
+For background, this is for parallelizing Monte Carlo and RL methods in an app for personal golang review.
+Monte Carlo methods are specifically useful/applicable in huge state spaces for which m >> n,
+thus parallelizing over n workers is highly beneficial.
+
+Some spitball solutions:
+1) Implement AtomicFloat64: this likely provides the most general solution for concurrent numerical ops
+2) Hash item indices to a smaller set of locks
+3) Refactored workers: workers generate and send individual matrix updates over a chan to a single writer
+Domain-specific solutions for RL:
+4) Location manager: workers derive their transitions from a single policy routine that ensures they traverse to unique positions
+5) Workers TryWriteLock() around a bit-set of current worker positions; if a state transition would collide with another worker,\
+   pick a different state at random until TryWriteLock() succeeds.
+   This could be done most robustly using a sync.Map of current agent locations.
+
+
+
+
+
+
 In many textbook examples like the classic 2d 'gridworld', matrix indices represent discrete states and matrix entries are state-value estimates.
-'Agents' (implemented as n goroutines) navigate the matrix
+'Agents' (as n goroutines) navigate the matrix
 and update the state values per visit or per episode, potentially stomping eachother's updates.
 Most of these algorithms can be guaranteed to converge despite such race conditions, but they would fail
 golang's '-race' build flag and allowing races feels fraught ("there is no such thing as a benign data race").

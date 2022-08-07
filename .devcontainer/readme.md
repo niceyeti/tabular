@@ -1,10 +1,10 @@
-To build or update the dev container, do the following in .devcontainer:
+To build or update the dev container, do the following in the .devcontainer/ folder:
 1)  Rebuild the base container and tag it `godev:latest`:
     * `docker build -f base.Dockerfile -t godev:latest .`
 2) Review Dockerfile; it points to godev:latest. Also review .devcontainer.json,
    which points to Dockerfile.
 3) Open vscode and select "Rebuild container". This
-   will rebuild the vscode container itself. It may hang after building; if so,
+   will rebuild the vscode container defined by Dockerfile. It may hang after building; if so,
    reopening vscode worked previously.
 
 The setup itself is derived from Microsoft's devcontainer go examples, which are a PITA to interpret.
