@@ -42,7 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, _ = t.AddParseTree(st4.Name(), st4.Tree)
+	_, err = t.AddParseTree(st4.Name(), st4.Tree)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,7 +63,11 @@ func main() {
 	}
 
 	of2, _ := os.Create("dynamic_example.html")
-	if err = t.Execute(of2, nil); err != nil {
+	if err = t.Execute(of2, []string{"some", "random", "data"}); err != nil {
+		log.Fatal(err)
+	}
+
+	if err = t.Execute(os.Stdout, []string{"some", "random", "data"}); err != nil {
 		log.Fatal(err)
 	}
 }

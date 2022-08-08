@@ -109,13 +109,14 @@ func NewServer(
 		last_update:   initial_states,
 		state_updates: state_updates,
 		views: []ViewComponent{
-			NewValuesGrid("values"),
+			NewValuesGrid("valuesgrid"),
 		},
 	}
 }
 
 type ViewComponent interface {
-	Template() (*template.Template, error)
+	// TODO: no error needed, could use Must() instead of returning one... or maybe caller would do so
+	Template(template.FuncMap) (*template.Template, error)
 	Update([][]Cell) []EleUpdate
 }
 
@@ -124,21 +125,22 @@ type ValuesGrid struct {
 }
 
 func NewValuesGrid(name string) *ValuesGrid {
+	name = template.HTMLEscapeString(name)
 	return &ValuesGrid{name}
 }
 
-func (vg *ValuesGrid) Template() (t *template.Template, err error) {
-	return template.New("values-grid").Parse(
+func (vg *ValuesGrid) Template(funcs template.FuncMap) (t *template.Template, err error) {
+	return template.New(vg.name).Funcs(funcs).Parse(
 		`<div id="state_values">
 			{{ $x_cells := len . }}
 			{{ $y_cells := len (index . 0) }}
 			{{ $cell_width := 100 }}
 			{{ $cell_height := $cell_width }}
-			{{ $width :=  mult $cell_width $x_cells }}
+			{{ $width := mult $cell_width $x_cells }}
 			{{ $height := mult $cell_height $y_cells }}
 			{{ $half_height := div $cell_height 2 }}
 			{{ $half_width := div $cell_width 2 }}
-			<svg id="{{ $component_name }}"
+			<svg id="` + vg.name + `"
 				width="{{ add $width 1 }}px"
 				height="{{ add $height 1 }}px"
 				style="shape-rendering: crispEdges;">
@@ -394,20 +396,17 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 			return j
 		},
 	}
+	// TODO: the fundamental problem with the func-map is that a template should own/define the
+	// set of functions it intends to use, rather than inheriting them (coupling). Something
+	// is weird about passing this down. A shared func map smells like distorted encapsulation.
 	t := template.New("index-html").Funcs(func_map)
 
 	view_templates := []*template.Template{}
 	for _, vc := range server.views {
-		if vt, err := vc.Template(); err != nil {
-			panic(err)
-		} else {
-			vt = vt.Funcs(func_map)
-			view_templates = append(view_templates, vt)
-			// TODO: clean error handling
-			if t, err = t.AddParseTree(vt.Name(), vt.Tree); err != nil {
-				panic(err)
-			}
-		}
+		vt := template.Must(vc.Template(func_map))
+		vt = vt.Funcs(func_map)
+		view_templates = append(view_templates, vt)
+		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
 	}
 
 	// TODO: isn't there recursive relationship here wrt to writers of the textual part of the templates?
@@ -455,13 +454,18 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 		`
 	for _, vt := range view_templates {
 		// Specify the nested template and pass in its params
-		main_template += "{{ template " + vt.Name() + " . }}"
+		main_template += `{{ template "` + vt.Name() + `" . }}`
 	}
 
 	main_template += `
 		</body>
 	</html>
 	`
+
+	fmt.Println(main_template)
+	//fmt.Println("\n\n")
+	//fmt.Printf("%#v", view_templates[0])
+	//return
 
 	var err error
 	if t, err = t.Parse(main_template); err != nil {

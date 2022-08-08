@@ -88,6 +88,7 @@ func print_values_async(states [][][][]State, done <-chan struct{}) {
 }
 */
 
+// TODO: use mixedCaps throughout
 func main() {
 	runApp()
 }
