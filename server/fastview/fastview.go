@@ -6,6 +6,7 @@ and then  multiplex that data to one or more views.
 package fastview
 
 import (
+	"context"
 	"errors"
 
 	channerics "github.com/niceyeti/channerics/channels"
@@ -33,54 +34,53 @@ type View struct {
 }
 
 type ViewComponent struct {
-	views   []*View            // The set of views (implementing )
-	updates <-chan []EleUpdate // All of the View ele-update chans fanned into a single channel of values to send to client
+	Views   []*View            // The set of views (implementing )
+	Updates <-chan []EleUpdate // All of the View ele-update chans fanned into a single channel of values to send to client
 }
 
-type ViewModel interface {
-	any
+type ViewBuilder[DataModel any, ViewModel any] struct {
+	source      <-chan DataModel // The source type of data, e.g. [][]State
+	viewModelFn func(DataModel) ViewModel
+	done        <-chan struct{}                // Okay if nil
+	builderFns  []func(<-chan ViewModel) *View // The set of functions for building views.
+	//updates     chan []EleUpdate               // All of the View ele-update chans fanned into a single channel of values to send to client
 }
 
-type DataModel interface {
-	any
-}
-
-type ViewBuilder[T1 DataModel, T2 ViewModel] struct {
-	source  <-chan T1               // The source type of data, e.g. [][]State
-	target  chan T2                 // The target data type, e.g. [][]Cell, State -> Cell
-	viewFns []func(<-chan T2) *View // The set of functions for building views.
-	updates chan []EleUpdate        // All of the View ele-update chans fanned into a single channel of values to send to client
-}
-
-func NewViewBuilder[T1 DataModel, T2 ViewModel](input <-chan T1) *ViewBuilder[T1, T2] {
-	return &ViewBuilder[T1, T2]{
+func NewViewBuilder[DataModel any, ViewModel any](
+	input <-chan DataModel,
+) *ViewBuilder[DataModel, ViewModel] {
+	return &ViewBuilder[DataModel, ViewModel]{
 		source: input,
 	}
 }
 
+// TODO: add a context function. `func (vb *ViewBuilder) WithContext()``
+
 // TODO: could use pivoting to enforce the order in which builders are called.
 // WithModel creates a new channel derived from the passed function to convert
 // items to the target view-model data type.
-func (vb *ViewBuilder[T1, T2]) WithModel(convert func(T1) T2, done <-chan struct{}) *ViewBuilder[T1, T2] {
-	vb.target = make(chan T2)
-	go func() {
-		for item := range channerics.OrDone[T1](done, vb.source) {
-			select {
-			case <-done:
-				return
-			case vb.target <- convert(item):
-			}
-		}
-	}()
-
+func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
+	convert func(DataModel) ViewModel,
+) *ViewBuilder[DataModel, ViewModel] {
+	vb.viewModelFn = convert
 	return vb
 }
 
 // WithView adds a view to the list of views to build. They will be returned in the same
 // order as built when Build() is called.
-func (vb *ViewBuilder[T1, T2]) WithView(fn func(<-chan T2) *View) *ViewBuilder[T1, T2] {
-	vb.viewFns = append(vb.viewFns, fn)
+func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
+	builderFn func(<-chan ViewModel) *View,
+) *ViewBuilder[DataModel, ViewModel] {
+	vb.builderFns = append(vb.builderFns, builderFn)
 	return vb
+}
+
+// WithContext ensures that all downstream channels are closed when context is cancelled.
+// TODO: channel closure communication needs to be evaluated.
+func (vb *ViewBuilder[DataModel, ViewModel]) WithContext(
+	ctx context.Context,
+) {
+	vb.done = ctx.Done()
 }
 
 // ErrNoViews is returned when Build() is called before the caller has added any views.
@@ -89,30 +89,93 @@ var ErrNoViews error = errors.New("no views to build: WithView must be called")
 // ErrNoModel is returned when Build() is called before  WithModel() has been called.
 var ErrNoModel error = errors.New("no model specified: WithModel must be called")
 
-func (vb *ViewBuilder[T1, T2]) Build(done <-chan struct{}) (*ViewComponent, error) {
-	if len(vb.viewFns) == 0 {
+// Build executes the stored builders, connecting all of the channels together and returning
+// a single aggregated ele-update channel and all the views.
+func (vb *ViewBuilder[DataModel, ViewModel]) Build() (*ViewComponent, error) {
+	if len(vb.builderFns) == 0 {
 		return nil, ErrNoViews
 	}
-	if vb.target == nil {
+	if vb.viewModelFn == nil {
 		return nil, ErrNoModel
 	}
 
+	// Setup the view-model channels to broadcast data to all views
+	var vmChan chan ViewModel = make(chan ViewModel)
+	go func() {
+		for item := range channerics.OrDone[DataModel](vb.done, vb.source) {
+			select {
+			case <-vb.done:
+				return
+			case vmChan <- vb.viewModelFn(item):
+			}
+
+			// done-guard
+			select {
+			case <-vb.done:
+				return
+			default:
+			}
+		}
+	}()
+
+	var vmChans []<-chan ViewModel = vb.broadcast(vb.source, len(vb.builderFns), vb.done)
 	var views []*View
 	var updates []<-chan []EleUpdate
-	for _, fn := range vb.viewFns {
-		view := fn(vb.target)
+	for i, builder := range vb.builderFns {
+		vmChan := make(chan ViewModel)
+		go func() {
+			for item := range channerics.OrDone[DataModel](vb.done, vb.source) {
+				select {
+				case <-done:
+					return
+				case vb.target <- convert(item):
+				}
+			}
+		}()
+
+		view := builder(vmChan)
 		views = append(views, view)
 		updates = append(updates, view.Updates)
 	}
 
 	return &ViewComponent{
-		views:   views,
-		updates: channerics.Merge[T2](updates),
+		Views:   views,
+		Updates: channerics.Merge[ViewModel](updates),
 	}
 }
 
-//     NewViewBuilder[T1, T2](source chan T1) *ViewBuilder
-//     vb.WithModel(func([]T1) []T2)
-//     vb.WithView(chan []T2 -> NewValuesGridView(t2_chan))
+// broacast returns a slice of channels of size n that repeat the data of the input channel.
+// Every item received via input is sent to every output channel. Note that items are not sent
+// in parallel to every output chan, only serially one channel at a time.
+// TODO: consider moving to channerics; needs evaluation, seems a bit anti-patternish.
+func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
+	input <-chan ViewModel,
+	n int,
+	done <-chan struct{},
+) (outputs []<-chan ViewModel) {
+	outChans := make([]chan ViewModel, n)
+	for i := 0; i < n; i++ {
+		outChans[i] = make(chan ViewModel)
+		outputs = append(outputs, outChans[i])
+	}
+
+	go func() {
+		for item := range channerics.OrDone[ViewModel](done, input) {
+			for _, vmChan := range outChans {
+				select {
+				case vmChan <- item:
+				case <-done:
+					return
+				}
+			}
+		}
+	}()
+
+	return
+}
+
+//     NewViewBuilder[DataModel, ViewModel](source chan DataModel) *ViewBuilder
+//     vb.WithModel(func([]DataModel) []ViewModel)
+//     vb.WithView(chan []ViewModel -> NewValuesGridView(t2_chan))
 //     vb.Build()  <- execute the builder to get views and ele-update chan; delaying execution of stored funcs allows setting up multiplexing
 //						of the @target channel to potentially several view listeners

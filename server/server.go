@@ -103,7 +103,6 @@ func NewServer(
 	addr string,
 	initial_states [][][][]models.State,
 	state_updates <-chan [][][][]models.State) *Server {
-
 	return &Server{
 		addr:          addr,
 		last_update:   initial_states,
