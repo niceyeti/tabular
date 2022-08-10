@@ -1,16 +1,17 @@
-/*
-ViewComponent implements a builder pattern to implement simple views:
-given an input data format, apply a transformation to a view-model,
-and then  multiplex that data to one or more views.
-*/
+// fastview implements a builder pattern to implement simple views:
+// given an input data format, apply a transformation to a view-model,
+// and then  multiplex that data to one or more views.
 package fastview
 
 import (
 	"context"
 	"errors"
+	"io"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
+
+// TODO: move models around, reorg
 
 // EleUpdate is an element identifier and a set of operations to apply to its attributes/content.
 type EleUpdate struct {
@@ -28,22 +29,18 @@ type Op struct {
 	Value string
 }
 
-// Implements Write(io.Writer) ???
-type View struct {
-	// TODO
-}
-
-type ViewComponent struct {
-	Views   []*View            // The set of views (implementing )
-	Updates <-chan []EleUpdate // All of the View ele-update chans fanned into a single channel of values to send to client
+// Viewer implements server side views: Write to allow writing their initial form
+// to an output stream and Updates to obtain the chan by which ele-updates are notified.
+type Viewer interface {
+	Updates() <-chan []EleUpdate
+	Write(io.Writer) error
 }
 
 type ViewBuilder[DataModel any, ViewModel any] struct {
 	source      <-chan DataModel // The source type of data, e.g. [][]State
 	viewModelFn func(DataModel) ViewModel
-	done        <-chan struct{}                // Okay if nil
-	builderFns  []func(<-chan ViewModel) *View // The set of functions for building views.
-	//updates     chan []EleUpdate               // All of the View ele-update chans fanned into a single channel of values to send to client
+	done        <-chan struct{}                 // Okay if nil
+	builderFns  []func(<-chan ViewModel) Viewer // The set of functions for building views.
 }
 
 func NewViewBuilder[DataModel any, ViewModel any](
@@ -69,7 +66,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
 // WithView adds a view to the list of views to build. They will be returned in the same
 // order as built when Build() is called.
 func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
-	builderFn func(<-chan ViewModel) *View,
+	builderFn func(<-chan ViewModel) Viewer,
 ) *ViewBuilder[DataModel, ViewModel] {
 	vb.builderFns = append(vb.builderFns, builderFn)
 	return vb
@@ -77,9 +74,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
 
 // WithContext ensures that all downstream channels are closed when context is cancelled.
 // TODO: channel closure communication needs to be evaluated.
-func (vb *ViewBuilder[DataModel, ViewModel]) WithContext(
-	ctx context.Context,
-) {
+func (vb *ViewBuilder[DataModel, ViewModel]) WithContext(ctx context.Context) {
 	vb.done = ctx.Done()
 }
 
@@ -91,7 +86,7 @@ var ErrNoModel error = errors.New("no model specified: WithModel must be called"
 
 // Build executes the stored builders, connecting all of the channels together and returning
 // a single aggregated ele-update channel and all the views.
-func (vb *ViewBuilder[DataModel, ViewModel]) Build() (*ViewComponent, error) {
+func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []Viewer, err error) {
 	if len(vb.builderFns) == 0 {
 		return nil, ErrNoViews
 	}
@@ -100,48 +95,14 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (*ViewComponent, error) {
 	}
 
 	// Setup the view-model channels to broadcast data to all views
-	var vmChan chan ViewModel = make(chan ViewModel)
-	go func() {
-		for item := range channerics.OrDone[DataModel](vb.done, vb.source) {
-			select {
-			case <-vb.done:
-				return
-			case vmChan <- vb.viewModelFn(item):
-			}
-
-			// done-guard
-			select {
-			case <-vb.done:
-				return
-			default:
-			}
-		}
-	}()
-
-	var vmChans []<-chan ViewModel = vb.broadcast(vb.source, len(vb.builderFns), vb.done)
-	var views []*View
-	var updates []<-chan []EleUpdate
-	for i, builder := range vb.builderFns {
-		vmChan := make(chan ViewModel)
-		go func() {
-			for item := range channerics.OrDone[DataModel](vb.done, vb.source) {
-				select {
-				case <-done:
-					return
-				case vb.target <- convert(item):
-				}
-			}
-		}()
-
-		view := builder(vmChan)
-		views = append(views, view)
-		updates = append(updates, view.Updates)
+	// TODO: pass done to Adapter, once channerics is updated. Also consider renaming Adapter to Convert or something...
+	vmChan := channerics.Adapter(nil, vb.source, vb.viewModelFn)
+	vmChans := vb.broadcast(vmChan, len(vb.builderFns), vb.done)
+	for i, build := range vb.builderFns {
+		views = append(views, build(vmChans[i]))
 	}
 
-	return &ViewComponent{
-		Views:   views,
-		Updates: channerics.Merge[ViewModel](updates),
-	}
+	return
 }
 
 // broacast returns a slice of channels of size n that repeat the data of the input channel.
@@ -160,7 +121,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
 	}
 
 	go func() {
-		for item := range channerics.OrDone[ViewModel](done, input) {
+		for item := range channerics.OrDone(done, input) {
 			for _, vmChan := range outChans {
 				select {
 				case vmChan <- item:
@@ -173,9 +134,3 @@ func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
 
 	return
 }
-
-//     NewViewBuilder[DataModel, ViewModel](source chan DataModel) *ViewBuilder
-//     vb.WithModel(func([]DataModel) []ViewModel)
-//     vb.WithView(chan []ViewModel -> NewValuesGridView(t2_chan))
-//     vb.Build()  <- execute the builder to get views and ele-update chan; delaying execution of stored funcs allows setting up multiplexing
-//						of the @target channel to potentially several view listeners

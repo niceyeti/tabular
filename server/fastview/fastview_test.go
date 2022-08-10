@@ -1,15 +1,43 @@
 package fastview
 
 import (
+	"io"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-type TestView struct{}
+type TestView struct {
+	updates chan []EleUpdate
+}
 
-func (tv *TestView) WithView(vm_data <-chan string) *View {
+func NewTestView(input <-chan string) Viewer {
+	updates := make(chan []EleUpdate)
+	go func() {
+		for range input {
+			updates <- []EleUpdate{
+				{
+					EleId: "123",
+					Ops: []Op{
+						{Key: "foo", Value: "bar"},
+					},
+				},
+			}
+		}
+	}()
 
+	return &TestView{
+		updates: updates,
+	}
+}
+
+func (tv *TestView) Write(writer io.Writer) (err error) {
+	_, err = writer.Write([]byte("blah"))
+	return
+}
+
+func (tv *TestView) Updates() <-chan []EleUpdate {
+	return tv.updates
 }
 
 func TestFastView(t *testing.T) {
@@ -17,9 +45,9 @@ func TestFastView(t *testing.T) {
 		Convey("When builder succeeds", func() {
 
 			input := make(chan int)
-			vc, err := NewViewBuilder[int, string](input).
-				WithModel(func(x int) string { return string(x) }, nil).
-				WithView().
+			_, err := NewViewBuilder[int, string](input).
+				WithModel(func(x int) string { return string(x) }).
+				WithView(NewTestView).
 				Build()
 			So(err, ShouldBeNil)
 

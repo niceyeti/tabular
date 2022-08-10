@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/gorilla/websocket v1.5.0
-	github.com/niceyeti/channerics v0.0.0-20220130152714-8e16c7c9a70a
+	github.com/niceyeti/channerics v0.0.0-20220810201115-0cb4eb004f34
 	github.com/smartystreets/goconvey v1.7.2
 )
 

@@ -4,8 +4,8 @@ github.com/gorilla/websocket v1.5.0 h1:PPwGk2jz7EePpoHN/+ClbZu8SPxiqlu12wZP/3sWm
 github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/jtolds/gls v4.20.0+incompatible h1:xdiiI2gbIgH/gLH7ADydsJ1uDOEzR8yvV7C0MuV77Wo=
 github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
-github.com/niceyeti/channerics v0.0.0-20220130152714-8e16c7c9a70a h1:fgSbrPspz2m71BvnEQ4ovb6coIya8+x4ONdFC4VwPVg=
-github.com/niceyeti/channerics v0.0.0-20220130152714-8e16c7c9a70a/go.mod h1:RY6Q+y2S+7hOyfFvCzkcYXUBtovbrS04zvBI26IiSbI=
+github.com/niceyeti/channerics v0.0.0-20220810201115-0cb4eb004f34 h1:/yCqLmt8jpvDvn8m34fDypDbrGaD7KUc3WHaeJfG9LE=
+github.com/niceyeti/channerics v0.0.0-20220810201115-0cb4eb004f34/go.mod h1:XY8yR3GQu3TKNpWPkHczHbAC+LXYwW1CUhS3YI8Wh8w=
 github.com/smartystreets/assertions v1.2.0 h1:42S6lae5dvLc7BrLu/0ugRtcFVjoJNMC/N3yZFZkDFs=
 github.com/smartystreets/assertions v1.2.0/go.mod h1:tcbTF8ujkAEcZ8TElKY+i30BzYlVhC/LOxJk7iOWnoo=
 github.com/smartystreets/goconvey v1.7.2 h1:9RBaZCeXEQ3UselpuwUQHltGVXvdwm6cv1hgR6gDIPg=

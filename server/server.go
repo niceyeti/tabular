@@ -460,11 +460,6 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	</html>
 	`
 
-	fmt.Println(main_template)
-	//fmt.Println("\n\n")
-	//fmt.Printf("%#v", view_templates[0])
-	//return
-
 	var err error
 	if t, err = t.Parse(main_template); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
