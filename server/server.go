@@ -79,7 +79,7 @@ type EleUpdate struct {
 	Ops []Op
 }
 
-// Op is a key and value. For example an attribute and a value to which it should be set.
+// Op is a key and value. For example an html attribute and its new value.
 type Op struct {
 	Key   string
 	Value string
@@ -129,8 +129,8 @@ func NewValuesGrid(name string) *ValuesGrid {
 	return &ValuesGrid{name}
 }
 
-func (vg *ValuesGrid) Template(funcs template.FuncMap) (t *template.Template, err error) {
-	return template.New(vg.name).Funcs(funcs).Parse(
+func (vg *ValuesGrid) Template(func_map template.FuncMap) (t *template.Template, err error) {
+	return template.New(vg.name).Funcs(func_map).Parse(
 		`<div id="state_values">
 			{{ $x_cells := len . }}
 			{{ $y_cells := len (index . 0) }}
@@ -146,29 +146,29 @@ func (vg *ValuesGrid) Template(funcs template.FuncMap) (t *template.Template, er
 				style="shape-rendering: crispEdges;">
 				{{ range $row := . }}
 					{{ range $cell := $row }}
-						<g>
-							<rect
-								x="{{ mult $cell.X $cell_width }}" 
-								y="{{ mult $cell.Y $cell_height }}"
-								width="{{ $cell_width }}"
-								height="{{ $cell_height }}" 
-								fill="none"
-								stroke="black"
-								stroke-width="1"/>
-							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-								x="{{ add (mult $cell.X $cell_width) $half_width }}" 
-								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
-								stroke="blue"
-								dominant-baseline="text-top" text-anchor="middle"
-								>{{ printf "%.2f" $cell.Max }}</text>
-							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
-								stroke="blue" stroke-width="1"
-								dominant-baseline="central" text-anchor="middle"
-								transform="rotate({{ $cell.PolicyArrowRotation }})"
-								>&uarr;</text>
-							</g>
+					<g>
+						<rect
+							x="{{ mult $cell.X $cell_width }}" 
+							y="{{ mult $cell.Y $cell_height }}"
+							width="{{ $cell_width }}"
+							height="{{ $cell_height }}" 
+							fill="none"
+							stroke="black"
+							stroke-width="1"/>
+						<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
+							x="{{ add (mult $cell.X $cell_width) $half_width }}" 
+							y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
+							stroke="blue"
+							dominant-baseline="text-top" text-anchor="middle"
+							>{{ printf "%.2f" $cell.Max }}</text>
+						<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
+							<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+							stroke="blue" stroke-width="1"
+							dominant-baseline="central" text-anchor="middle"
+							transform="rotate({{ $cell.PolicyArrowRotation }})"
+							>&uarr;</text>
 						</g>
+					</g>
 					{{ end }}
 				{{ end }}
 			</svg>
@@ -404,7 +404,6 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	view_templates := []*template.Template{}
 	for _, vc := range server.views {
 		vt := template.Must(vc.Template(func_map))
-		vt = vt.Funcs(func_map)
 		view_templates = append(view_templates, vt)
 		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
 	}
