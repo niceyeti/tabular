@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"tabular/server/fastview"
 
 	"github.com/gorilla/websocket"
+	channerics "github.com/niceyeti/channerics/channels"
 )
 
 // TODO: refactor the whole server. This is pretty awful but fine for prototyping the realtime svg updates.
@@ -86,9 +88,11 @@ type Op struct {
 }
 
 type Server struct {
-	addr          string
-	last_update   [][][][]models.State
-	state_updates <-chan [][][][]models.State
+	addr string
+	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
+	lastUpdate [][][][]models.State
+	views      []fastview.ViewComponent
+	eleUpdates <-chan []fastview.EleUpdate
 }
 
 /*
@@ -103,143 +107,46 @@ func NewServer(
 	initial_states [][][][]models.State,
 	state_updates <-chan [][][][]models.State) *Server {
 
+	// TODO: I'm not super worried about setting up elegant teardown. It would
+	// be a good exercise. The contexts are not super clear either. The gist is
+	// that rootCtx could represent a shutdown signal, etc., but usage is not needful.
+	rootCtx := context.TODO()
+
+	// Build all of the views on server construction. This is a tad weird, and has alternatives.
+	// For example views could be constructed on the fly per endpoint, broken out by view (separate pages).
+	// But this could also be done by building/managing the views in advance and querying them on the fly.
+	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
+	// and extends other options.
+	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](state_updates).
+		WithContext(rootCtx).
+		WithModel(cell_views.Convert).
+		WithView(func(
+			cellUpdates <-chan [][]cell_views.Cell,
+			done <-chan struct{},
+		) fastview.ViewComponent {
+			return cell_views.NewValuesGrid("valuesgrid", cellUpdates, done)
+		}).
+		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// TODO: this is a bandaid. Similar to the index-html template note, by abstracting
+	// the views I have left the server in a state of insufficient abstraction. The next
+	// step will be figuring out where some of this can live appropriately. For example,
+	// dependency-inversion suggests that the websocket should be passed into some view-component
+	// (a page representing a coherent collection of views), which then fans-in the ele-update
+	// channels and throttles its updates to the clients. The primary models here are all fastview,
+	// so perhaps this is clearly part of a controller for fastview.
+	updates := fanIn(rootCtx.Done(), views)
+
 	return &Server{
-		addr:          addr,
-		last_update:   initial_states,
-		state_updates: state_updates,
+		addr:       addr,
+		lastUpdate: initial_states,
+		views:      views,
+		eleUpdates: updates,
 	}
 }
-
-//	type ViewComponent interface {
-//		// TODO: no error needed, could use Must() instead of returning one... or maybe caller would do so
-//		Template(template.FuncMap) (*template.Template, error)
-//		Update([][]Cell) []EleUpdate
-//	}
-//
-//	type ValuesGrid struct {
-//		name string
-//	}
-//
-//	func NewValuesGrid(name string) *ValuesGrid {
-//		name = template.HTMLEscapeString(name)
-//		return &ValuesGrid{name}
-//	}
-//
-//	func (vg *ValuesGrid) Template(func_map template.FuncMap) (t *template.Template, err error) {
-//		return template.New(vg.name).Funcs(func_map).Parse(
-//			`<div id="state_values">
-//				{{ $x_cells := len . }}
-//				{{ $y_cells := len (index . 0) }}
-//				{{ $cell_width := 100 }}
-//				{{ $cell_height := $cell_width }}
-//				{{ $width := mult $cell_width $x_cells }}
-//				{{ $height := mult $cell_height $y_cells }}
-//				{{ $half_height := div $cell_height 2 }}
-//				{{ $half_width := div $cell_width 2 }}
-//				<svg id="` + vg.name + `"
-//					width="{{ add $width 1 }}px"
-//					height="{{ add $height 1 }}px"
-//					style="shape-rendering: crispEdges;">
-//					{{ range $row := . }}
-//						{{ range $cell := $row }}
-//						<g>
-//							<rect
-//								x="{{ mult $cell.X $cell_width }}"
-//								y="{{ mult $cell.Y $cell_height }}"
-//								width="{{ $cell_width }}"
-//								height="{{ $cell_height }}"
-//								fill="none"
-//								stroke="black"
-//								stroke-width="1"/>
-//							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-//								x="{{ add (mult $cell.X $cell_width) $half_width }}"
-//								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}"
-//								stroke="blue"
-//								dominant-baseline="text-top" text-anchor="middle"
-//								>{{ printf "%.2f" $cell.Max }}</text>
-//							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-//								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
-//								stroke="blue" stroke-width="1"
-//								dominant-baseline="central" text-anchor="middle"
-//								transform="rotate({{ $cell.PolicyArrowRotation }})"
-//								>&uarr;</text>
-//							</g>
-//						</g>
-//						{{ end }}
-//					{{ end }}
-//				</svg>
-//			</div>`)
-//	}
-//
-// // Returns the set of view updates needed for the view to reflect the current values.
-//
-//	func (vg *ValuesGrid) Update(cells [][]Cell) (ops []EleUpdate) {
-//		for _, row := range cells {
-//			for _, cell := range row {
-//				// Update the value text
-//				ops = append(ops, EleUpdate{
-//					EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
-//					Ops: []Op{
-//						{"textContent", fmt.Sprintf("%.2f", cell.Max)},
-//					},
-//				})
-//				// Update the policy arrow indicators
-//				ops = append(ops, EleUpdate{
-//					EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
-//					Ops: []Op{
-//						//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
-//						{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
-//						{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
-//					},
-//				})
-//			}
-//		}
-//		return
-//	}
-//
-//	func getScale(state *models.State) int {
-//		return int(math.Hypot(float64(state.VX), float64(state.VY)))
-//	}
-//
-// // getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
-// // to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
-//
-//	func getDegrees(state *models.State) int {
-//		if state.VX == 0 && state.VY == 0 {
-//			return 0
-//		}
-//		rad := math.Atan2(float64(state.VY), float64(state.VX))
-//		deg := rad * 180 / math.Pi
-//		// deg is correct in cartesian space, but must be subtracted from 90 for rotation in svg coors
-//		return int(90 - deg)
-//
-// //}
-//
-// Returns the set of view updates needed for the view to reflect the current values.
-//
-//	func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
-//		for _, row := range cells {
-//			for _, cell := range row {
-//				// Update the value text
-//				updates = append(updates, EleUpdate{
-//					EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
-//					Ops: []Op{
-//						{"textContent", fmt.Sprintf("%.2f", cell.Max)},
-//					},
-//				})
-//				// Update the policy arrow indicators
-//				updates = append(updates, EleUpdate{
-//					EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
-//					Ops: []Op{
-//						//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
-//						{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
-//						{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
-//					},
-//				})
-//			}
-//		}
-//		return
-//	}
 
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serve_index)
@@ -250,6 +157,63 @@ func (server *Server) Serve() {
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Println(err)
 	}
+}
+
+// fanIn aggregates all of the views' ele-update channels into a single channel,
+// and throttle its output.
+// TODO: see note in caller. This is needs a different home
+func fanIn(
+	done <-chan struct{},
+	views []fastview.ViewComponent,
+) <-chan []fastview.EleUpdate {
+	inputs := make([]<-chan []fastview.EleUpdate, len(views))
+	for i, view := range views {
+		inputs[i] = view.Updates()
+	}
+	output := throttle(
+		done,
+		channerics.Merge(done, inputs...),
+		time.Millisecond)
+
+	return output
+}
+
+// throttle batches and sends values from the input channel at the passed rate.
+// This can be useful when multiple channels produce values independently but driven
+// by the same event transactions, such as a single upstream data source.
+// TODO: consider elevating to channerics; though this could be more generic (batching
+// by time, num items, or other criteria).
+// NOTE: the poor synchronicity of time-delayed batching seems like a code smell. Evaluate
+// if/when refactoring the server. For example note the property that chaining throttles
+// together results in additive delays, whereas it would be desirable for a chain to throttle
+// only for the max of all their throttles.
+func throttle[T any](
+	done <-chan struct{},
+	source <-chan []T,
+	rate time.Duration, // Could @rate, the throttle condition, be a func() bool instead?
+) <-chan []T {
+	output := make(chan []T)
+
+	go func() {
+		defer close(output)
+		batch := []T{}
+		last := time.Now()
+		for data := range channerics.OrDone(done, source) {
+			// TODO: this is unbounded growth within a time frame.
+			batch = append(batch, data...)
+			if time.Since(last) > rate {
+				select {
+				case output <- batch:
+					last = time.Now()
+					batch = batch[:0]
+				case <-done:
+					return
+				}
+			}
+		}
+	}()
+
+	return output
 }
 
 // serve_websocket publishes state updates to the client via websocket.
@@ -268,12 +232,14 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	server.publish_state_updates(ws)
 }
 
+// TODO: this code is now fubar until I refactor the server and fastviews. This code
+// does not define the relationships between clients and websockets, nor closure.
 // publish_state_updates transforms state updates from the training method into
 // view updates sent to the client.
 // Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
 func (server *Server) publish_state_updates(ws *websocket.Conn) {
-	publish := func(updates []EleUpdate) <-chan error {
+	publish := func(updates []fastview.EleUpdate) <-chan error {
 		errchan := make(chan error)
 		go func() {
 			defer close(errchan)
@@ -283,16 +249,16 @@ func (server *Server) publish_state_updates(ws *websocket.Conn) {
 		}()
 		return errchan
 	}
-	last_update_time := time.Now()
+	last := time.Now()
 	resolution := time.Millisecond * 200
 	var done <-chan error
 
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max number of updates per second.
-	for states := range server.state_updates {
+	for updates := range server.eleUpdates {
 		//fmt.Println("WS server tick")
 		// Drop updates when receiving them too quickly.
-		if time.Since(last_update_time) < resolution {
+		if time.Since(last) < resolution {
 			continue
 		}
 
@@ -309,14 +275,12 @@ func (server *Server) publish_state_updates(ws *websocket.Conn) {
 			}
 		}
 
-		last_update_time = time.Now()
+		last = time.Now()
 		if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 			fmt.Println(err)
 			return
 		}
 
-		cells := convert_states_to_cells(states)
-		updates := get_cell_updates(cells)
 		done = publish(updates)
 	}
 }
@@ -333,19 +297,6 @@ func (server *Server) closeWebsocket(ws *websocket.Conn) {
 // TODO: cleanup template and its ownership
 // FUTURE: it would be a fun problem to solve to devise a robust way to serve multiple
 // ui subcomponents (value function, policy visual, etc) and assemble them as one.
-/*
-Each component:
-	- has-a static template in which it embeds its initial parameters
-	- receives latest states and generates update ops
-
-	Methods:
-	Template([][]Cell) (*t.Template, error) // The initial template of the component, given the cells
-	Update(states [][]Cell) ([]Op)  // Notify of the latest cell values and get updates
-
-
-
-
-*/
 func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
@@ -357,21 +308,6 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-
-	// Build the views. The context for doing so is:
-	// - a single client is loading the view, and a websocket (1:1)
-	// - a single request context; destruction of the view (internal channels and goroutines) could occur on websocket cancellation when ping pong fails
-	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](server.state_updates).
-		WithContext(r.Context()).
-		WithModel(cell_views.Convert).
-		WithView(func(cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
-			// TODO: resolve passage of context into view
-			return cell_views.NewValuesGrid("valuesgrid", cellUpdates)
-		}).
-		Build()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	fmt.Println("parsing...")
 	// Build the template, bind data.
@@ -397,7 +333,7 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	t := template.New("index-html").Funcs(func_map)
 
 	view_templates := []*template.Template{}
-	for _, vc := range views {
+	for _, vc := range server.views {
 		vt := template.Must(vc.Template(func_map))
 		view_templates = append(view_templates, vt)
 		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
@@ -456,15 +392,20 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	</html>
 	`
 
+	var err error
 	if t, err = t.Parse(main_template); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}
 
-	// CRITICAL: TODO figure out a clean way to solve this issue with passing down the cells or
-	// other arbitrary data to nested templates. Is there an elegant way to solve this?
-	// Even a simplification "works for now" solution would be good.
-	cells := convert_states_to_cells(server.last_update)
+	// TODO: this is incomplete abstraction of the views. The last bit of coupling is that
+	// the cells must be passed into the template; the template seems to reside at a higher level
+	// (the server) which doesn't seem like it should know about Cells. Fine for now, but the
+	// solving this would lead to cleaner/better design. Perhaps the entire index.html generation
+	// is a responsibility of the cell_views package. Basically I have arrived at a mixed level of
+	// abstraction, whereby views nearly-fully encapsulate information, but not quite, and should
+	// continue toward a fully view-agnostic server whose only responsibility is serving.
+	cells := cell_views.Convert(server.lastUpdate)
 	if err = t.Execute(w, cells); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return

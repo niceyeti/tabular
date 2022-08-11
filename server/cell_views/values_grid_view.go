@@ -34,7 +34,8 @@ func Convert(states [][][][]models.State) (cells [][]Cell) {
 		maxState := models.Max_vel_state(velstates)
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
-			X: x, Y: max_y - y - 1,
+			X:                   x,
+			Y:                   max_y - y - 1,
 			Max:                 atomic_float.AtomicRead(&maxState.Value),
 			PolicyArrowRotation: getDegrees(maxState),
 			PolicyArrowScale:    getScale(maxState),
@@ -45,7 +46,7 @@ func Convert(states [][][][]models.State) (cells [][]Cell) {
 
 type ValuesGrid struct {
 	id      string
-	updates chan []fastview.EleUpdate
+	updates <-chan []fastview.EleUpdate
 }
 
 func NewValuesGrid(
@@ -57,33 +58,11 @@ func NewValuesGrid(
 		fmt.Println("WARNING: names with hyphens intefere with html/template parsing of the `template` directive")
 	}
 	vg = &ValuesGrid{id: template.HTMLEscapeString(id)}
-	// Init is a bit awkward, this could also be done via lazy-init in the Updates() method.
-	vg.init(done, cells)
-
+	vg.updates = channerics.Adapter(
+		done,
+		cells,
+		vg.onUpdate)
 	return
-}
-
-func (vg *ValuesGrid) init(
-	done <-chan struct{},
-	cells <-chan [][]Cell,
-) {
-	if vg.updates != nil {
-		return
-	}
-
-	updates := make(chan []fastview.EleUpdate)
-	go func() {
-		defer close(updates)
-		for nextCells := range channerics.OrDone(done, cells) {
-			eleOps := vg.update(nextCells)
-			select {
-			case updates <- eleOps:
-			case <-done:
-				return
-			}
-		}
-	}()
-	vg.updates = updates
 }
 
 func (vg *ValuesGrid) Updates() <-chan []fastview.EleUpdate {
@@ -138,8 +117,8 @@ func (vg *ValuesGrid) Template(
 		</div>`)
 }
 
-// Returns the set of view updates needed for the view to reflect the current values.
-func (vg *ValuesGrid) update(cells [][]Cell) (ops []fastview.EleUpdate) {
+// Returns the set of view updates needed for the view to reflect current values.
+func (vg *ValuesGrid) onUpdate(cells [][]Cell) (ops []fastview.EleUpdate) {
 	for _, row := range cells {
 		for _, cell := range row {
 			// Update the value text

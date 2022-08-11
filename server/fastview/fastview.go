@@ -43,8 +43,8 @@ type ViewComponent interface {
 type ViewBuilder[DataModel any, ViewModel any] struct {
 	source      <-chan DataModel // The source type of data, e.g. [][]State
 	viewModelFn func(DataModel) ViewModel
-	builderFns  []func(<-chan ViewModel) ViewComponent // The set of functions for building views.
-	done        <-chan struct{}                        // Okay if nil
+	builderFns  []func(<-chan ViewModel, <-chan struct{}) ViewComponent // The set of functions for building views.
+	done        <-chan struct{}                                         // Okay if nil
 }
 
 func NewViewBuilder[DataModel any, ViewModel any](
@@ -70,7 +70,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
 // WithView adds a view to the list of views to build. They will be returned in the same
 // order as built when Build() is called.
 func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
-	builderFn func(<-chan ViewModel) ViewComponent,
+	builderFn func(<-chan ViewModel, <-chan struct{}) ViewComponent,
 ) *ViewBuilder[DataModel, ViewModel] {
 	vb.builderFns = append(vb.builderFns, builderFn)
 	return vb
@@ -101,11 +101,12 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err
 		return nil, ErrNoModel
 	}
 
-	// TODO: pass done to Adapter, once channerics is updated. Also consider renaming Adapter to Convert or something...
+	// TODO: pass done to Adapter, once channerics is updated.
+	// Also consider renaming Adapter to Convert or something...
 	vmChan := channerics.Adapter(nil, vb.source, vb.viewModelFn)
 	vmChans := vb.broadcast(vmChan, len(vb.builderFns), vb.done)
 	for i, build := range vb.builderFns {
-		views = append(views, build(vmChans[i]))
+		views = append(views, build(vmChans[i], vb.done))
 	}
 	return
 }
@@ -113,7 +114,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err
 // broacast returns a slice of n channels that repeat the data of the input channel.
 // Every item received via input is sent to every output channel. Note that items are not sent
 // in parallel to every output chan, only serially one channel at a time.
-// TODO: consider moving to channerics; needs evaluation, seems a bit anti-patternish.
+// TODO: consider moving to channerics; needs evaluation, this seems a bit anti-patternish.
 func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
 	input <-chan ViewModel,
 	n int,
