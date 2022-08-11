@@ -1,6 +1,7 @@
 package fastview
 
 import (
+	"fmt"
 	"io"
 	"testing"
 
@@ -14,10 +15,10 @@ type TestView struct {
 func NewTestView(input <-chan string) Viewer {
 	updates := make(chan []EleUpdate)
 	go func() {
-		for range input {
+		for datum := range input {
 			updates <- []EleUpdate{
 				{
-					EleId: "123",
+					EleId: datum,
 					Ops: []Op{
 						{Key: "foo", Value: "bar"},
 					},
@@ -43,20 +44,21 @@ func (tv *TestView) Updates() <-chan []EleUpdate {
 func TestFastView(t *testing.T) {
 	Convey("Happy path builder", t, func() {
 		Convey("When builder succeeds", func() {
-
 			input := make(chan int)
-			_, err := NewViewBuilder[int, string](input).
-				WithModel(func(x int) string { return string(x) }).
+			views, err := NewViewBuilder[int, string](input).
+				WithModel(func(x int) string { return fmt.Sprintf("%d", x) }).
 				WithView(NewTestView).
 				Build()
 			So(err, ShouldBeNil)
+			So(len(views), ShouldEqual, 1)
 
-			//     NewViewBuilder[DataModel, ViewModel](source chan DataModel) *ViewBuilder
-			//     vb.WithModel(func([]DataModel) []ViewModel)
-			//     vb.WithView(chan []ViewModel -> NewValuesGridView(t2_chan))
-			//     vb.Build()  <- execute the builder to get views and ele-update chan; delaying execution of stored funcs allows setting up multiplexing
-			//						of the @target channel to potentially several view listeners
-
+			// Send a value and make sure it is sent across
+			go func() {
+				input <- 1337
+			}()
+			update := <-views[0].Updates()
+			So(len(update), ShouldEqual, 1)
+			So(update[0].EleId, ShouldEqual, "1337")
 		})
 	})
 }

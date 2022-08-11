@@ -6,7 +6,7 @@ package fastview
 import (
 	"context"
 	"errors"
-	"io"
+	"html/template"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
@@ -29,18 +29,22 @@ type Op struct {
 	Value string
 }
 
-// Viewer implements server side views: Write to allow writing their initial form
+// ViewComponent implements server side views: Write to allow writing their initial form
 // to an output stream and Updates to obtain the chan by which ele-updates are notified.
-type Viewer interface {
+type ViewComponent interface {
 	Updates() <-chan []EleUpdate
-	Write(io.Writer) error
+	// Seems robust enough. I vacillated between Template and simply io.Writer, by which each
+	// view simply writes its full text. But templates seem an appropriate view description,
+	// and allows passing a func map. It seems a question of layering, and this seems appropriate
+	// to a view.
+	Template(template.FuncMap) (t *template.Template, err error)
 }
 
 type ViewBuilder[DataModel any, ViewModel any] struct {
 	source      <-chan DataModel // The source type of data, e.g. [][]State
 	viewModelFn func(DataModel) ViewModel
-	done        <-chan struct{}                 // Okay if nil
-	builderFns  []func(<-chan ViewModel) Viewer // The set of functions for building views.
+	builderFns  []func(<-chan ViewModel) ViewComponent // The set of functions for building views.
+	done        <-chan struct{}                        // Okay if nil
 }
 
 func NewViewBuilder[DataModel any, ViewModel any](
@@ -53,7 +57,7 @@ func NewViewBuilder[DataModel any, ViewModel any](
 
 // TODO: add a context function. `func (vb *ViewBuilder) WithContext()``
 
-// TODO: could use pivoting to enforce the order in which builders are called.
+// TODO: could use builder-pivoting to enforce the order in which builders are called. See Dmitri Nesteruk example.
 // WithModel creates a new channel derived from the passed function to convert
 // items to the target view-model data type.
 func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
@@ -66,7 +70,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
 // WithView adds a view to the list of views to build. They will be returned in the same
 // order as built when Build() is called.
 func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
-	builderFn func(<-chan ViewModel) Viewer,
+	builderFn func(<-chan ViewModel) ViewComponent,
 ) *ViewBuilder[DataModel, ViewModel] {
 	vb.builderFns = append(vb.builderFns, builderFn)
 	return vb
@@ -74,8 +78,11 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
 
 // WithContext ensures that all downstream channels are closed when context is cancelled.
 // TODO: channel closure communication needs to be evaluated.
-func (vb *ViewBuilder[DataModel, ViewModel]) WithContext(ctx context.Context) {
+func (vb *ViewBuilder[DataModel, ViewModel]) WithContext(
+	ctx context.Context,
+) *ViewBuilder[DataModel, ViewModel] {
 	vb.done = ctx.Done()
+	return vb
 }
 
 // ErrNoViews is returned when Build() is called before the caller has added any views.
@@ -86,7 +93,7 @@ var ErrNoModel error = errors.New("no model specified: WithModel must be called"
 
 // Build executes the stored builders, connecting all of the channels together and returning
 // a single aggregated ele-update channel and all the views.
-func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []Viewer, err error) {
+func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err error) {
 	if len(vb.builderFns) == 0 {
 		return nil, ErrNoViews
 	}
@@ -94,18 +101,16 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []Viewer, err error)
 		return nil, ErrNoModel
 	}
 
-	// Setup the view-model channels to broadcast data to all views
 	// TODO: pass done to Adapter, once channerics is updated. Also consider renaming Adapter to Convert or something...
 	vmChan := channerics.Adapter(nil, vb.source, vb.viewModelFn)
 	vmChans := vb.broadcast(vmChan, len(vb.builderFns), vb.done)
 	for i, build := range vb.builderFns {
 		views = append(views, build(vmChans[i]))
 	}
-
 	return
 }
 
-// broacast returns a slice of channels of size n that repeat the data of the input channel.
+// broacast returns a slice of n channels that repeat the data of the input channel.
 // Every item received via input is sent to every output channel. Note that items are not sent
 // in parallel to every output chan, only serially one channel at a time.
 // TODO: consider moving to channerics; needs evaluation, seems a bit anti-patternish.
@@ -121,6 +126,12 @@ func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
 	}
 
 	go func() {
+		defer func() {
+			for _, ch := range outChans {
+				close(ch)
+			}
+		}()
+
 		for item := range channerics.OrDone(done, input) {
 			for _, vmChan := range outChans {
 				select {

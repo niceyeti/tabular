@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"html/template"
 	"log"
-	"math"
 	"net/http"
 	"time"
 
-	"tabular/atomic_float"
 	"tabular/models"
+	"tabular/server/cell_views"
+	"tabular/server/fastview"
 
 	"github.com/gorilla/websocket"
 )
@@ -89,7 +89,6 @@ type Server struct {
 	addr          string
 	last_update   [][][][]models.State
 	state_updates <-chan [][][][]models.State
-	views         []ViewComponent
 }
 
 /*
@@ -103,163 +102,144 @@ func NewServer(
 	addr string,
 	initial_states [][][][]models.State,
 	state_updates <-chan [][][][]models.State) *Server {
+
 	return &Server{
 		addr:          addr,
 		last_update:   initial_states,
 		state_updates: state_updates,
-		views: []ViewComponent{
-			NewValuesGrid("valuesgrid"),
-		},
 	}
 }
 
-type ViewComponent interface {
-	// TODO: no error needed, could use Must() instead of returning one... or maybe caller would do so
-	Template(template.FuncMap) (*template.Template, error)
-	Update([][]Cell) []EleUpdate
-}
-
-type ValuesGrid struct {
-	name string
-}
-
-func NewValuesGrid(name string) *ValuesGrid {
-	name = template.HTMLEscapeString(name)
-	return &ValuesGrid{name}
-}
-
-func (vg *ValuesGrid) Template(func_map template.FuncMap) (t *template.Template, err error) {
-	return template.New(vg.name).Funcs(func_map).Parse(
-		`<div id="state_values">
-			{{ $x_cells := len . }}
-			{{ $y_cells := len (index . 0) }}
-			{{ $cell_width := 100 }}
-			{{ $cell_height := $cell_width }}
-			{{ $width := mult $cell_width $x_cells }}
-			{{ $height := mult $cell_height $y_cells }}
-			{{ $half_height := div $cell_height 2 }}
-			{{ $half_width := div $cell_width 2 }}
-			<svg id="` + vg.name + `"
-				width="{{ add $width 1 }}px"
-				height="{{ add $height 1 }}px"
-				style="shape-rendering: crispEdges;">
-				{{ range $row := . }}
-					{{ range $cell := $row }}
-					<g>
-						<rect
-							x="{{ mult $cell.X $cell_width }}" 
-							y="{{ mult $cell.Y $cell_height }}"
-							width="{{ $cell_width }}"
-							height="{{ $cell_height }}" 
-							fill="none"
-							stroke="black"
-							stroke-width="1"/>
-						<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
-							x="{{ add (mult $cell.X $cell_width) $half_width }}" 
-							y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
-							stroke="blue"
-							dominant-baseline="text-top" text-anchor="middle"
-							>{{ printf "%.2f" $cell.Max }}</text>
-						<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-							<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
-							stroke="blue" stroke-width="1"
-							dominant-baseline="central" text-anchor="middle"
-							transform="rotate({{ $cell.PolicyArrowRotation }})"
-							>&uarr;</text>
-						</g>
-					</g>
-					{{ end }}
-				{{ end }}
-			</svg>
-		</div>`)
-}
-
+//	type ViewComponent interface {
+//		// TODO: no error needed, could use Must() instead of returning one... or maybe caller would do so
+//		Template(template.FuncMap) (*template.Template, error)
+//		Update([][]Cell) []EleUpdate
+//	}
+//
+//	type ValuesGrid struct {
+//		name string
+//	}
+//
+//	func NewValuesGrid(name string) *ValuesGrid {
+//		name = template.HTMLEscapeString(name)
+//		return &ValuesGrid{name}
+//	}
+//
+//	func (vg *ValuesGrid) Template(func_map template.FuncMap) (t *template.Template, err error) {
+//		return template.New(vg.name).Funcs(func_map).Parse(
+//			`<div id="state_values">
+//				{{ $x_cells := len . }}
+//				{{ $y_cells := len (index . 0) }}
+//				{{ $cell_width := 100 }}
+//				{{ $cell_height := $cell_width }}
+//				{{ $width := mult $cell_width $x_cells }}
+//				{{ $height := mult $cell_height $y_cells }}
+//				{{ $half_height := div $cell_height 2 }}
+//				{{ $half_width := div $cell_width 2 }}
+//				<svg id="` + vg.name + `"
+//					width="{{ add $width 1 }}px"
+//					height="{{ add $height 1 }}px"
+//					style="shape-rendering: crispEdges;">
+//					{{ range $row := . }}
+//						{{ range $cell := $row }}
+//						<g>
+//							<rect
+//								x="{{ mult $cell.X $cell_width }}"
+//								y="{{ mult $cell.Y $cell_height }}"
+//								width="{{ $cell_width }}"
+//								height="{{ $cell_height }}"
+//								fill="none"
+//								stroke="black"
+//								stroke-width="1"/>
+//							<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
+//								x="{{ add (mult $cell.X $cell_width) $half_width }}"
+//								y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}"
+//								stroke="blue"
+//								dominant-baseline="text-top" text-anchor="middle"
+//								>{{ printf "%.2f" $cell.Max }}</text>
+//							<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
+//								<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+//								stroke="blue" stroke-width="1"
+//								dominant-baseline="central" text-anchor="middle"
+//								transform="rotate({{ $cell.PolicyArrowRotation }})"
+//								>&uarr;</text>
+//							</g>
+//						</g>
+//						{{ end }}
+//					{{ end }}
+//				</svg>
+//			</div>`)
+//	}
+//
+// // Returns the set of view updates needed for the view to reflect the current values.
+//
+//	func (vg *ValuesGrid) Update(cells [][]Cell) (ops []EleUpdate) {
+//		for _, row := range cells {
+//			for _, cell := range row {
+//				// Update the value text
+//				ops = append(ops, EleUpdate{
+//					EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
+//					Ops: []Op{
+//						{"textContent", fmt.Sprintf("%.2f", cell.Max)},
+//					},
+//				})
+//				// Update the policy arrow indicators
+//				ops = append(ops, EleUpdate{
+//					EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
+//					Ops: []Op{
+//						//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
+//						{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
+//						{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
+//					},
+//				})
+//			}
+//		}
+//		return
+//	}
+//
+//	func getScale(state *models.State) int {
+//		return int(math.Hypot(float64(state.VX), float64(state.VY)))
+//	}
+//
+// // getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
+// // to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
+//
+//	func getDegrees(state *models.State) int {
+//		if state.VX == 0 && state.VY == 0 {
+//			return 0
+//		}
+//		rad := math.Atan2(float64(state.VY), float64(state.VX))
+//		deg := rad * 180 / math.Pi
+//		// deg is correct in cartesian space, but must be subtracted from 90 for rotation in svg coors
+//		return int(90 - deg)
+//
+// //}
+//
 // Returns the set of view updates needed for the view to reflect the current values.
-func (vg *ValuesGrid) Update(cells [][]Cell) (ops []EleUpdate) {
-	for _, row := range cells {
-		for _, cell := range row {
-			// Update the value text
-			ops = append(ops, EleUpdate{
-				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
-				Ops: []Op{
-					{"textContent", fmt.Sprintf("%.2f", cell.Max)},
-				},
-			})
-			// Update the policy arrow indicators
-			ops = append(ops, EleUpdate{
-				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
-				Ops: []Op{
-					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
-					{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
-					{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
-				},
-			})
-		}
-	}
-	return
-}
-
-func convert_states_to_cells(states [][][][]models.State) (cells [][]Cell) {
-	cells = make([][]Cell, len(states))
-	max_y := len(states[0])
-	for x := range states {
-		cells[x] = make([]Cell, max_y)
-	}
-
-	models.Visit_xy_states(states, func(velstates [][]models.State) {
-		x, y := velstates[0][0].X, velstates[0][0].Y
-		maxState := models.Max_vel_state(velstates)
-		// flip the y indices for displaying in svg coordinate system
-		cells[x][y] = Cell{
-			X: x, Y: max_y - y - 1,
-			Max:                 atomic_float.AtomicRead(&maxState.Value),
-			PolicyArrowRotation: getDegrees(maxState),
-			PolicyArrowScale:    getScale(maxState),
-		}
-	})
-	return
-}
-
-func getScale(state *models.State) int {
-	return int(math.Hypot(float64(state.VX), float64(state.VY)))
-}
-
-// getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
-// to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
-func getDegrees(state *models.State) int {
-	if state.VX == 0 && state.VY == 0 {
-		return 0
-	}
-	rad := math.Atan2(float64(state.VY), float64(state.VX))
-	deg := rad * 180 / math.Pi
-	// deg is correct in cartesian space, but must be subtracted from 90 for rotation in svg coors
-	return int(90 - deg)
-}
-
-// Returns the set of view updates needed for the view to reflect the current values.
-func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
-	for _, row := range cells {
-		for _, cell := range row {
-			// Update the value text
-			updates = append(updates, EleUpdate{
-				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
-				Ops: []Op{
-					{"textContent", fmt.Sprintf("%.2f", cell.Max)},
-				},
-			})
-			// Update the policy arrow indicators
-			updates = append(updates, EleUpdate{
-				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
-				Ops: []Op{
-					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
-					{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
-					{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
-				},
-			})
-		}
-	}
-	return
-}
+//
+//	func get_cell_updates(cells [][]Cell) (updates []EleUpdate) {
+//		for _, row := range cells {
+//			for _, cell := range row {
+//				// Update the value text
+//				updates = append(updates, EleUpdate{
+//					EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
+//					Ops: []Op{
+//						{"textContent", fmt.Sprintf("%.2f", cell.Max)},
+//					},
+//				})
+//				// Update the policy arrow indicators
+//				updates = append(updates, EleUpdate{
+//					EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
+//					Ops: []Op{
+//						//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
+//						{"transform", fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
+//						{"stroke-width", fmt.Sprintf("%d", cell.PolicyArrowScale)},
+//					},
+//				})
+//			}
+//		}
+//		return
+//	}
 
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serve_index)
@@ -378,6 +358,21 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 
+	// Build the views. The context for doing so is:
+	// - a single client is loading the view, and a websocket (1:1)
+	// - a single request context; destruction of the view (internal channels and goroutines) could occur on websocket cancellation when ping pong fails
+	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](server.state_updates).
+		WithContext(r.Context()).
+		WithModel(cell_views.Convert).
+		WithView(func(cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
+			// TODO: resolve passage of context into view
+			return cell_views.NewValuesGrid("valuesgrid", cellUpdates)
+		}).
+		Build()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Println("parsing...")
 	// Build the template, bind data.
 	// TODO: note the child-template dependency on the func map. Also see the note about the
@@ -397,11 +392,12 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	}
 	// TODO: the fundamental problem with the func-map is that a template should own/define the
 	// set of functions it intends to use, rather than inheriting them (coupling). Something
-	// is weird about passing this down. A shared func map smells like distorted encapsulation.
+	// is weird about passing this down. A shared func map smells like distorted encapsulation,
+	// though Funcs() does specify that a template may override func-map entries.
 	t := template.New("index-html").Funcs(func_map)
 
 	view_templates := []*template.Template{}
-	for _, vc := range server.views {
+	for _, vc := range views {
 		vt := template.Must(vc.Template(func_map))
 		view_templates = append(view_templates, vt)
 		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
@@ -460,12 +456,14 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	</html>
 	`
 
-	var err error
 	if t, err = t.Parse(main_template); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}
 
+	// CRITICAL: TODO figure out a clean way to solve this issue with passing down the cells or
+	// other arbitrary data to nested templates. Is there an elegant way to solve this?
+	// Even a simplification "works for now" solution would be good.
 	cells := convert_states_to_cells(server.last_update)
 	if err = t.Execute(w, cells); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
