@@ -2,7 +2,7 @@ package fastview
 
 import (
 	"fmt"
-	"io"
+	"html/template"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,7 +12,10 @@ type TestView struct {
 	updates chan []EleUpdate
 }
 
-func NewTestView(input <-chan string) Viewer {
+func NewTestView(
+	input <-chan string,
+	done <-chan struct{},
+) ViewComponent {
 	updates := make(chan []EleUpdate)
 	go func() {
 		for datum := range input {
@@ -32,9 +35,10 @@ func NewTestView(input <-chan string) Viewer {
 	}
 }
 
-func (tv *TestView) Write(writer io.Writer) (err error) {
-	_, err = writer.Write([]byte("blah"))
-	return
+func (tv *TestView) Template(
+	funcs template.FuncMap,
+) (t *template.Template, err error) {
+	return nil, nil
 }
 
 func (tv *TestView) Updates() <-chan []EleUpdate {
