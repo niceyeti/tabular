@@ -56,37 +56,6 @@ are not that significant, since this app only requires a small portion of websoc
 Summary: SSEs are great and modest, suitable to something like ads. But websockets are more expressive but connection heavy.
 */
 
-// Cell is for converting the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
-// oriented in svg coordinate system such that [0][0] is the logical cell that would
-// be printed in the console at top left. This purpose of [][]Cells is convenient
-// traversal and data for generating golang templates; otherwise one must implement
-// ugly template funcs to map the [][][][]State structure to views, which is tedious.
-// As a rule of thumb, Cell fields should be immediately usable as view parameters.
-// The purpose of Cell itself is to contain ephemeral descriptors (max action direction,
-// etc) useful for putting in the view, and arbitrary calculated fields can be added as desired.
-type Cell struct {
-	X, Y                int
-	Max                 float64
-	PolicyArrowRotation int
-	PolicyArrowScale    int
-}
-
-// EleUpdate is an element identifier and a set of operations to apply to its attributes/content.
-type EleUpdate struct {
-	// The id by which to find the element
-	EleId string
-	// Op keys are attrib keys or 'textContent', values are the strings to which these are set.
-	// Example: ('x','123') means 'set attribute 'x' to 123. 'textContent' is a reserved key:
-	// ('textContent','abc') means 'set ele.textContent to abc'.
-	Ops []Op
-}
-
-// Op is a key and value. For example an html attribute and its new value.
-type Op struct {
-	Key   string
-	Value string
-}
-
 type Server struct {
 	addr string
 	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
@@ -95,30 +64,19 @@ type Server struct {
 	eleUpdates <-chan []fastview.EleUpdate
 }
 
-/*
-Server: this server is a monolith. A pure server would abstract away the details of each
-visual component from some builder/factories for generating them (and their websockets),
-and would then simply coordinate them. This server instead has it all: knowledge of
-templates, converting models to view models, and bootstrapping web sockets.
-*/
-
+// NewServer initializes all of the views and returns a server.
 func NewServer(
+	ctx context.Context,
 	addr string,
-	initial_states [][][][]models.State,
+	initialStates [][][][]models.State,
 	state_updates <-chan [][][][]models.State) *Server {
-
-	// TODO: I'm not super worried about setting up elegant teardown. It would
-	// be a good exercise. The contexts are not super clear either. The gist is
-	// that rootCtx could represent a shutdown signal, etc., but usage is not needful.
-	rootCtx := context.TODO()
-
 	// Build all of the views on server construction. This is a tad weird, and has alternatives.
 	// For example views could be constructed on the fly per endpoint, broken out by view (separate pages).
 	// But this could also be done by building/managing the views in advance and querying them on the fly.
 	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
-	// and extends other options.
+	// and extends other options. Serving views is the server's only responsibility, so this fits.
 	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](state_updates).
-		WithContext(rootCtx).
+		WithContext(ctx).
 		WithModel(cell_views.Convert).
 		WithView(func(
 			cellUpdates <-chan [][]cell_views.Cell,
@@ -137,12 +95,13 @@ func NewServer(
 	// dependency-inversion suggests that the websocket should be passed into some view-component
 	// (a page representing a coherent collection of views), which then fans-in the ele-update
 	// channels and throttles its updates to the clients. The primary models here are all fastview,
-	// so perhaps this is clearly part of a controller for fastview.
-	updates := fanIn(rootCtx.Done(), views)
+	// so perhaps this is clearly part of a controller for fastview. Testability drives
+	// decomposition.
+	updates := fanIn(ctx.Done(), views)
 
 	return &Server{
 		addr:       addr,
-		lastUpdate: initial_states,
+		lastUpdate: initialStates,
 		views:      views,
 		eleUpdates: updates,
 	}
@@ -154,12 +113,13 @@ func (server *Server) Serve() {
 	//http.HandleFunc("/profile", pprof.Profile)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
 	// the port number to connect to the web socket.
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(server.addr, nil); err != nil {
 		fmt.Println(err)
 	}
+	fmt.Println("Server started!")
 }
 
-// fanIn aggregates all of the views' ele-update channels into a single channel,
+// fanIn aggregates the views' ele-update channels into a single channel,
 // and throttle its output.
 // TODO: see note in caller. This is needs a different home
 func fanIn(
@@ -170,12 +130,10 @@ func fanIn(
 	for i, view := range views {
 		inputs[i] = view.Updates()
 	}
-	output := throttle(
+	return throttle(
 		done,
 		channerics.Merge(done, inputs...),
 		time.Millisecond)
-
-	return output
 }
 
 // throttle batches and sends values from the input channel at the passed rate.
@@ -235,7 +193,8 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 // TODO: this code is now fubar until I refactor the server and fastviews. This code
 // does not define the relationships between clients and websockets, nor closure.
 // publish_state_updates transforms state updates from the training method into
-// view updates sent to the client.
+// view updates sent to the client. "How can I test this" guides the decomposition of
+// components.
 // Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
 func (server *Server) publish_state_updates(ws *websocket.Conn) {
@@ -382,6 +341,7 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 		</head>
 		<body>
 		`
+
 	for _, vt := range view_templates {
 		// Specify the nested template and pass in its params
 		main_template += `{{ template "` + vt.Name() + `" . }}`

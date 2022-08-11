@@ -50,15 +50,20 @@ func selectTrack() []string {
 }
 
 func runApp() {
+	// TODO: I'm not super worried about setting up elegant teardown. It would
+	// be a good exercise. The contexts are not super clear either. The gist is
+	// that rootCtx could represent a shutdown signal, etc., but usage is not needful.
+	appCtx := context.TODO()
 	racetrack := selectTrack()
 	states = Convert(racetrack)
 	Train(
+		appCtx,
 		states,
 		*nworkers,
-		exportStates,
-		context.TODO())
+		exportStates)
 	// TODO: read and pass in the addr and port
 	NewServer(
+		appCtx,
 		addr,
 		states,
 		state_snapshots,

@@ -238,12 +238,12 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 
 // Train is async and initializes states and policies and begins training.
 func Train(
+	ctx context.Context,
 	states [][][][]State,
 	nworkers int,
-	progress_fn func(int, <-chan struct{}),
-	ctx context.Context) {
+	progressFn func(int, <-chan struct{})) {
 	// initialize the state values to something slightly larger than the lowest reward, for stability
-	init_state_values(states, COLLISION_REWARD)
+	initStateVals(states, COLLISION_REWARD)
 	// display startup policy
 	Show_policy(states)
 	// show max values
@@ -252,24 +252,24 @@ func Train(
 	alpha_mc_train_vanilla_parallel(
 		states,
 		nworkers,
-		progress_fn,
+		progressFn,
 		ctx.Done())
 }
 
-func init_state_values(states [][][][]State, val float64) {
+func initStateVals(states [][][][]State, val float64) {
 	Visit(states, func(s *State) { s.Value = val })
 }
 
 /*
 Implements vanilla alpha-MC using a fixed number of workers to generate episodes
 which are sent to the estimator to update the state values. Coordination is simple:
-	- agents generate and queue episodes up to some stopping criteria
-	- processor halts the agents to empty its episode queue and update state values
+  - agents generate and queue episodes up to some stopping criteria
+  - processor halts the agents to empty its episode queue and update state values
 */
 func alpha_mc_train_vanilla_parallel(
 	states [][][][]State,
 	nworkers int,
-	progress_fn func(int, <-chan struct{}),
+	progressFn func(int, <-chan struct{}),
 	done <-chan struct{}) {
 	// Note: remember to exclude invalid/out-of-bound states and zero-velocity states.
 	rand.Seed(time.Now().Unix())
@@ -357,7 +357,7 @@ func alpha_mc_train_vanilla_parallel(
 	// Estimator updates state values from agent experiences.
 	estimator := func(
 		alpha, gamma float64,
-		progress_fn func(int, <-chan struct{})) {
+		progressFn func(int, <-chan struct{})) {
 		episode_count := 0
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
@@ -378,8 +378,8 @@ func alpha_mc_train_vanilla_parallel(
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)
 			episode_count++
-			progress_fn(episode_count, done)
+			progressFn(episode_count, done)
 		}
 	}
-	go estimator(alpha, gamma, progress_fn)
+	go estimator(alpha, gamma, progressFn)
 }
