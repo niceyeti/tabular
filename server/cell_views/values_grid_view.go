@@ -58,10 +58,7 @@ func NewValuesGrid(
 		fmt.Println("WARNING: names with hyphens intefere with html/template parsing of the `template` directive")
 	}
 	vg = &ValuesGrid{id: template.HTMLEscapeString(id)}
-	vg.updates = channerics.Adapter(
-		done,
-		cells,
-		vg.onUpdate)
+	vg.updates = channerics.Convert(done, cells, vg.onUpdate)
 	return
 }
 

@@ -69,13 +69,13 @@ func NewServer(
 	ctx context.Context,
 	addr string,
 	initialStates [][][][]models.State,
-	state_updates <-chan [][][][]models.State) *Server {
+	stateUpdates <-chan [][][][]models.State) *Server {
 	// Build all of the views on server construction. This is a tad weird, and has alternatives.
 	// For example views could be constructed on the fly per endpoint, broken out by view (separate pages).
 	// But this could also be done by building/managing the views in advance and querying them on the fly.
 	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
 	// and extends other options. Serving views is the server's only responsibility, so this fits.
-	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](state_updates).
+	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](stateUpdates).
 		WithContext(ctx).
 		WithModel(cell_views.Convert).
 		WithView(func(
@@ -108,7 +108,7 @@ func NewServer(
 }
 
 func (server *Server) Serve() {
-	http.HandleFunc("/", server.serve_index)
+	http.HandleFunc("/", server.serveIndex)
 	http.HandleFunc("/ws", server.serve_websocket)
 	//http.HandleFunc("/profile", pprof.Profile)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
@@ -187,17 +187,17 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer server.closeWebsocket(ws)
-	server.publish_state_updates(ws)
+	server.publishUpdates(ws)
 }
 
 // TODO: this code is now fubar until I refactor the server and fastviews. This code
 // does not define the relationships between clients and websockets, nor closure.
-// publish_state_updates transforms state updates from the training method into
+// publishUpdates transforms state updates from the training method into
 // view updates sent to the client. "How can I test this" guides the decomposition of
 // components.
 // Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
-func (server *Server) publish_state_updates(ws *websocket.Conn) {
+func (server *Server) publishUpdates(ws *websocket.Conn) {
 	publish := func(updates []fastview.EleUpdate) <-chan error {
 		errchan := make(chan error)
 		go func() {
@@ -256,7 +256,7 @@ func (server *Server) closeWebsocket(ws *websocket.Conn) {
 // TODO: cleanup template and its ownership
 // FUTURE: it would be a fun problem to solve to devise a robust way to serve multiple
 // ui subcomponents (value function, policy visual, etc) and assemble them as one.
-func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
+func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
@@ -273,7 +273,7 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	// TODO: note the child-template dependency on the func map. Also see the note about the
 	// recursive relationships of the views/templates. The same seems to apply here, whereby
 	// the func-map could be passed down recursively to child components.
-	func_map := template.FuncMap{
+	funcMap := template.FuncMap{
 		"add":  func(i, j int) int { return i + j },
 		"sub":  func(i, j int) int { return i - j },
 		"mult": func(i, j int) int { return i * j },
@@ -289,12 +289,12 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	// set of functions it intends to use, rather than inheriting them (coupling). Something
 	// is weird about passing this down. A shared func map smells like distorted encapsulation,
 	// though Funcs() does specify that a template may override func-map entries.
-	t := template.New("index-html").Funcs(func_map)
+	t := template.New("index-html").Funcs(funcMap)
 
-	view_templates := []*template.Template{}
+	viewTemplates := []*template.Template{}
 	for _, vc := range server.views {
-		vt := template.Must(vc.Template(func_map))
-		view_templates = append(view_templates, vt)
+		vt := template.Must(vc.Template(funcMap))
+		viewTemplates = append(viewTemplates, vt)
 		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
 	}
 
@@ -303,7 +303,7 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 	// defining the layout of their children to some degree.
 
 	// The main template bootstraps the rest: sets up client websocket and updates, aggregates views.
-	main_template := `<!DOCTYPE html>
+	indexTemplate := `<!DOCTYPE html>
 	<html>
 		<head>
 			<link rel="icon" href="data:,">
@@ -342,18 +342,18 @@ func (server *Server) serve_index(w http.ResponseWriter, r *http.Request) {
 		<body>
 		`
 
-	for _, vt := range view_templates {
+	for _, vt := range viewTemplates {
 		// Specify the nested template and pass in its params
-		main_template += `{{ template "` + vt.Name() + `" . }}`
+		indexTemplate += `{{ template "` + vt.Name() + `" . }}`
 	}
 
-	main_template += `
+	indexTemplate += `
 		</body>
 	</html>
 	`
 
 	var err error
-	if t, err = t.Parse(main_template); err != nil {
+	if t, err = t.Parse(indexTemplate); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}

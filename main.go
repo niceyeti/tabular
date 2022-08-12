@@ -23,13 +23,13 @@ import (
 )
 
 var (
-	state_snapshots chan [][][][]State = make(chan [][][][]State)
-	states          [][][][]State
-	dbg             *bool
-	nworkers        *int
-	host            *string
-	port            *string
-	addr            string
+	stateUpdates chan [][][][]State = make(chan [][][][]State)
+	states       [][][][]State
+	dbg          *bool
+	nworkers     *int
+	host         *string
+	port         *string
+	addr         string
 )
 
 func init() {
@@ -61,12 +61,12 @@ func runApp() {
 		states,
 		*nworkers,
 		exportStates)
-	// TODO: read and pass in the addr and port
+
 	NewServer(
 		appCtx,
 		addr,
 		states,
-		state_snapshots,
+		stateUpdates,
 	).Serve()
 }
 
@@ -75,7 +75,7 @@ func runApp() {
 func exportStates(episode_count int, done <-chan struct{}) {
 	if episode_count%1000 == 1 {
 		select {
-		case state_snapshots <- states:
+		case stateUpdates <- states:
 		case <-done:
 		}
 	}

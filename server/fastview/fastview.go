@@ -103,46 +103,10 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err
 
 	// TODO: pass done to Adapter, once channerics is updated.
 	// Also consider renaming Adapter to Convert or something...
-	vmChan := channerics.Adapter(nil, vb.source, vb.viewModelFn)
-	vmChans := vb.broadcast(vmChan, len(vb.builderFns), vb.done)
+	vmChan := channerics.Convert(nil, vb.source, vb.viewModelFn)
+	vmChans := channerics.Broadcast(vb.done, vmChan, len(vb.builderFns))
 	for i, build := range vb.builderFns {
 		views = append(views, build(vmChans[i], vb.done))
 	}
-	return
-}
-
-// broacast returns a slice of n channels that repeat the data of the input channel.
-// Every item received via input is sent to every output channel. Note that items are not sent
-// in parallel to every output chan, only serially one channel at a time.
-// TODO: consider moving to channerics; needs evaluation, this seems a bit anti-patternish.
-func (vb *ViewBuilder[DataModel, ViewModel]) broadcast(
-	input <-chan ViewModel,
-	n int,
-	done <-chan struct{},
-) (outputs []<-chan ViewModel) {
-	outChans := make([]chan ViewModel, n)
-	for i := 0; i < n; i++ {
-		outChans[i] = make(chan ViewModel)
-		outputs = append(outputs, outChans[i])
-	}
-
-	go func() {
-		defer func() {
-			for _, ch := range outChans {
-				close(ch)
-			}
-		}()
-
-		for item := range channerics.OrDone(done, input) {
-			for _, vmChan := range outChans {
-				select {
-				case vmChan <- item:
-				case <-done:
-					return
-				}
-			}
-		}
-	}()
-
 	return
 }
