@@ -7,42 +7,11 @@ package cell_views
 import (
 	"fmt"
 	"html/template"
-	"math"
 	"strings"
-	"tabular/atomic_float"
-	"tabular/models"
 	"tabular/server/fastview"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
-
-// TODO: remove
-var _ *fastview.Op = nil
-
-// Convert transforms the passed state models into Cells for consumption by values-views.
-// TODO: where can this live? Is reorg needed? Notice how this references model.State and helpers.
-// I suppose this is fine, but re-evaluate.
-func Convert(states [][][][]models.State) (cells [][]Cell) {
-	cells = make([][]Cell, len(states))
-	max_y := len(states[0])
-	for x := range states {
-		cells[x] = make([]Cell, max_y)
-	}
-
-	models.VisitXYStates(states, func(velstates [][]models.State) {
-		x, y := velstates[0][0].X, velstates[0][0].Y
-		maxState := models.MaxVelState(velstates)
-		// flip the y indices for displaying in svg coordinate system
-		cells[x][y] = Cell{
-			X:                   x,
-			Y:                   max_y - y - 1,
-			Max:                 atomic_float.AtomicRead(&maxState.Value),
-			PolicyArrowRotation: getDegrees(maxState),
-			PolicyArrowScale:    getScale(maxState),
-		}
-	})
-	return
-}
 
 type ValuesGrid struct {
 	id      string
@@ -87,11 +56,11 @@ func (vg *ValuesGrid) Template(
 					{{ range $cell := $row }}
 					<g>
 						<rect
-							x="{{ mult $cell.X $cell_width }}" 
+							x="{{ mult $cell.X $cell_width }}"
 							y="{{ mult $cell.Y $cell_height }}"
 							width="{{ $cell_width }}"
-							height="{{ $cell_height }}" 
-							fill="none"
+							height="{{ $cell_height }}"
+							fill="{{ $cell.Fill }}"
 							stroke="black"
 							stroke-width="1"/>
 						<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
@@ -139,20 +108,4 @@ func (vg *ValuesGrid) onUpdate(
 		}
 	}
 	return
-}
-
-func getScale(state *models.State) int {
-	return int(math.Hypot(float64(state.VX), float64(state.VY)))
-}
-
-// getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
-// to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
-func getDegrees(state *models.State) int {
-	if state.VX == 0 && state.VY == 0 {
-		return 0
-	}
-	rad := math.Atan2(float64(state.VY), float64(state.VX))
-	deg := rad * 180 / math.Pi
-	// deg is correct in cartesian space, but must be subtracted from 90 for rotation in svg coors
-	return int(90 - deg)
 }

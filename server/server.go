@@ -84,6 +84,12 @@ func NewServer(
 		) fastview.ViewComponent {
 			return cell_views.NewValuesGrid("valuesgrid", cellUpdates, done)
 		}).
+		WithView(func(
+			cellUpdates <-chan [][]cell_views.Cell,
+			done <-chan struct{},
+		) fastview.ViewComponent {
+			return cell_views.NewValueFunction("valuefunction", cellUpdates, done)
+		}).
 		Build()
 	if err != nil {
 		log.Fatal(err)
@@ -289,8 +295,7 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	// set of functions it intends to use, rather than inheriting them (coupling). Something
 	// is weird about passing this down. A shared func map smells like distorted encapsulation,
 	// though Funcs() does specify that a template may override func-map entries.
-	t := template.New("index-html").Funcs(funcMap)
-
+	t := template.New("index").Funcs(funcMap)
 	viewTemplates := []*template.Template{}
 	for _, vc := range server.views {
 		vt := template.Must(vc.Template(funcMap))
@@ -342,7 +347,7 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		<body>
 		`
 
-	for _, vt := range viewTemplates {
+	for _, vt := range viewTemplates[1:] {
 		// Specify the nested template and pass in its params
 		indexTemplate += `{{ template "` + vt.Name() + `" . }}`
 	}
@@ -351,6 +356,8 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		</body>
 	</html>
 	`
+
+	fmt.Println(indexTemplate)
 
 	var err error
 	if t, err = t.Parse(indexTemplate); err != nil {
