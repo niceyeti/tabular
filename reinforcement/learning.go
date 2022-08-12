@@ -76,7 +76,7 @@ agent's that will take an eternity to randomly reach some goal state and thereby
 */
 
 // For MC random starts, grab a random state that is on the track (i.e. is actionable to the agent).
-func get_random_start_state(states [][][][]State) (start_state *State) {
+func getRandomStartState(states [][][][]State) (start_state *State) {
 	max_x := len(states)
 	max_y := len(states[0])
 
@@ -101,7 +101,7 @@ func get_random_start_state(states [][][][]State) (start_state *State) {
 // result in a collision; otherwise the agent will learn actions resembling 'teleports'
 // to new positions. Of course rigorous check forces checking quadratic paths, but this
 // will instead use simple collision checking, e.g. line-of-sight clearance from s to s'.
-func get_successor(
+func getSuccessor(
 	states [][][][]State,
 	cur_state *State,
 	action *Action,
@@ -119,7 +119,7 @@ func get_successor(
 	new_y := int(math.Max(math.Min(float64(cur_state.Y+new_vy), max_y), 0))
 
 	successor = &states[new_x][new_y][new_vx][new_vy]
-	if collision := check_terminal_collision(states, cur_state, new_vx, new_vy); collision != nil {
+	if collision := checkTerminalCollision(states, cur_state, new_vx, new_vy); collision != nil {
 		successor = collision
 	}
 
@@ -133,7 +133,7 @@ func get_successor(
 // region spanned by start and start + (vx,vy) contains any wall cells, a hyper-conservative
 // metric for collisions. Off grid actions are not accounted for.
 // Returns: the first state with which the agent would collide; nil, if no collision.
-func check_terminal_collision(states [][][][]State, start *State, vx, vy int) (state *State) {
+func checkTerminalCollision(states [][][][]State, start *State, vx, vy int) (state *State) {
 	max_x := len(states) - 1
 	max_y := len(states[0]) - 1
 
@@ -161,24 +161,24 @@ func check_terminal_collision(states [][][][]State, start *State, vx, vy int) (s
 }
 
 // Get a random velocity change (dv) in (-1,0,+1) (per problem def.).
-func get_rand_dv() int {
+func getRandDv() int {
 	return rand.Int()%3 - 1
 }
 
-func get_rand_action(cur_state *State) (action *Action) {
+func getRandAction(cur_state *State) (action *Action) {
 	action = &Action{
-		Dvx: get_rand_dv(),
-		Dvy: get_rand_dv(),
+		Dvx: getRandDv(),
+		Dvy: getRandDv(),
 	}
 	// By problem def velocity components cannot both be zero, so the effect of this action must be checked.
 	for cur_state.VX+action.Dvx == 0 && cur_state.VY+action.Dvy == 0 {
-		action.Dvx = get_rand_dv()
-		action.Dvy = get_rand_dv()
+		action.Dvx = getRandDv()
+		action.Dvy = getRandDv()
 	}
 	return
 }
 
-func get_reward(target *State) (reward float64) {
+func getReward(target *State) (reward float64) {
 	switch target.CellType {
 	case WALL:
 		reward = COLLISION_REWARD
@@ -209,7 +209,7 @@ func print_substates(states [][][][]State, x, y int) {
 
 // Given the current state, returns the max-valued reachable state per all available actions.
 // NOTE: algorithmically the agent must consider collision when searching for the maximum
-// next state. The get_successor function does this internally, which here results in the returned
+// next state. The getSuccessor function does this internally, which here results in the returned
 // state presumably being a low-valued collision state (a wall). But it just needs to remembered
 // that the agent's max value search must account for the environment, else its policy might converge
 // to something invalid due to invalid values, by evaluating bad states as good.
@@ -219,7 +219,7 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 		for dvy := -1; dvy < 2; dvy++ {
 			// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
 			candidate_action := &Action{Dvx: dvx, Dvy: dvy}
-			successor := get_successor(states, cur_state, candidate_action)
+			successor := getSuccessor(states, cur_state, candidate_action)
 			// By problem def, velocity components cannot both be zero.
 			if successor.VX == 0 && successor.VY == 0 {
 				continue
@@ -245,11 +245,11 @@ func Train(
 	// initialize the state values to something slightly larger than the lowest reward, for stability
 	initStateVals(states, COLLISION_REWARD)
 	// display startup policy
-	Show_policy(states)
+	ShowPolicy(states)
 	// show max values
-	Show_max_values(states)
-	Show_grid(states)
-	alpha_mc_train_vanilla_parallel(
+	ShowMaxValues(states)
+	ShowGrid(states)
+	alphaMonteCarloVanillaTrain(
 		states,
 		nworkers,
 		progressFn,
@@ -266,7 +266,7 @@ which are sent to the estimator to update the state values. Coordination is simp
   - agents generate and queue episodes up to some stopping criteria
   - processor halts the agents to empty its episode queue and update state values
 */
-func alpha_mc_train_vanilla_parallel(
+func alphaMonteCarloVanillaTrain(
 	states [][][][]State,
 	nworkers int,
 	progressFn func(int, <-chan struct{}),
@@ -274,7 +274,7 @@ func alpha_mc_train_vanilla_parallel(
 	// Note: remember to exclude invalid/out-of-bound states and zero-velocity states.
 	rand.Seed(time.Now().Unix())
 	rand_restart := func() *State {
-		return get_random_start_state(states)
+		return getRandomStartState(states)
 	}
 
 	// The policy function, by which the agents choose actions to explore/exploit the environment.
@@ -283,8 +283,8 @@ func alpha_mc_train_vanilla_parallel(
 		r := rand.Float64()
 		if r <= epsilon {
 			// Exploration: do something random
-			action := get_rand_action(state)
-			target = get_successor(states, state, action)
+			action := getRandAction(state)
+			target = getSuccessor(states, state, action)
 		} else {
 			// Exploitation: search for max-valued state per available actions.
 			target, action = get_max_successor(states, state)
@@ -316,7 +316,7 @@ func alpha_mc_train_vanilla_parallel(
 				state := start_state_gen()
 				for !is_terminal(state) {
 					successor, action := policy_fn(state)
-					reward := get_reward(successor)
+					reward := getReward(successor)
 					episode = append(
 						episode,
 						Step{

@@ -29,9 +29,9 @@ func Convert(states [][][][]models.State) (cells [][]Cell) {
 		cells[x] = make([]Cell, max_y)
 	}
 
-	models.Visit_xy_states(states, func(velstates [][]models.State) {
+	models.VisitXYStates(states, func(velstates [][]models.State) {
 		x, y := velstates[0][0].X, velstates[0][0].Y
-		maxState := models.Max_vel_state(velstates)
+		maxState := models.MaxVelState(velstates)
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
 			X:                   x,
@@ -115,7 +115,9 @@ func (vg *ValuesGrid) Template(
 }
 
 // Returns the set of view updates needed for the view to reflect current values.
-func (vg *ValuesGrid) onUpdate(cells [][]Cell) (ops []fastview.EleUpdate) {
+func (vg *ValuesGrid) onUpdate(
+	cells [][]Cell,
+) (ops []fastview.EleUpdate) {
 	for _, row := range cells {
 		for _, cell := range row {
 			// Update the value text

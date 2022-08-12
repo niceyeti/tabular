@@ -101,9 +101,8 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err
 		return nil, ErrNoModel
 	}
 
-	// TODO: pass done to Adapter, once channerics is updated.
 	// Also consider renaming Adapter to Convert or something...
-	vmChan := channerics.Convert(nil, vb.source, vb.viewModelFn)
+	vmChan := channerics.Convert(vb.done, vb.source, vb.viewModelFn)
 	vmChans := channerics.Broadcast(vb.done, vmChan, len(vb.builderFns))
 	for i, build := range vb.builderFns {
 		views = append(views, build(vmChans[i], vb.done))
