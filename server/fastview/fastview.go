@@ -45,7 +45,7 @@ type ViewComponent interface {
 type ViewBuilder[DataModel any, ViewModel any] struct {
 	source      <-chan DataModel // The source type of data, e.g. [][]State
 	viewModelFn func(DataModel) ViewModel
-	builderFns  []func(<-chan ViewModel, <-chan struct{}) ViewComponent // The set of functions for building views.
+	builderFns  []func(<-chan struct{}, <-chan ViewModel) ViewComponent // The set of functions for building views.
 	done        <-chan struct{}                                         // Okay if nil
 }
 
@@ -72,7 +72,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
 // WithView adds a view to the list of views to build. They will be returned in the same
 // order as built when Build() is called.
 func (vb *ViewBuilder[DataModel, ViewModel]) WithView(
-	builderFn func(<-chan ViewModel, <-chan struct{}) ViewComponent,
+	builderFn func(<-chan struct{}, <-chan ViewModel) ViewComponent,
 ) *ViewBuilder[DataModel, ViewModel] {
 	vb.builderFns = append(vb.builderFns, builderFn)
 	return vb
@@ -107,7 +107,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err
 	vmChan := channerics.Convert(vb.done, vb.source, vb.viewModelFn)
 	vmChans := channerics.Broadcast(vb.done, vmChan, len(vb.builderFns))
 	for i, build := range vb.builderFns {
-		views = append(views, build(vmChans[i], vb.done))
+		views = append(views, build(vb.done, vmChans[i]))
 	}
 	return
 }

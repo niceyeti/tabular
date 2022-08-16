@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"math"
 	"strings"
+	"sync"
 	"tabular/server/fastview"
 
 	channerics "github.com/niceyeti/channerics/channels"
@@ -39,28 +40,30 @@ func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 	return vf.updates
 }
 
-const (
+var (
 	// TODO: some of these are parameters that must be set per the first [][]Cell update dimensions.
-	width, height = 600, 320            // canvas size in pixels
-	cells         = 10                  // number of grid cells
-	xyrange       = 10.0                // axis ranges (-xyrange..+xyrange)
-	xyscale       = width / 2 / xyrange // pixels per x or y unit
-	zscale        = height * 0.4        // pixels per z unit
-	angle         = math.Pi / 6         // angle of x, y axes (=30°)
+	width         float64                 // canvas size in pixels
+	cellDim       float64   = 100         // Cell height/width size in pixels
+	cells         float64                 // number of grid cells
+	xyscale       float64                 // pixels per x or y unit
+	zscale        float64                 // pixels per z unit
+	ang30                   = math.Pi / 6 // angle of x, y axes (=30°)
+	setViewParams sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
 )
 
-var sin30, cos30 = math.Sin(angle), math.Cos(angle) // sin(30°), cos(30°)
+var sin30, cos30 = math.Sin(ang30), math.Cos(ang30) // sin(30°), cos(30°)
+
+func setParams(cs [][]Cell) {
+	cells = float64(len(cs))
+	width = cells * cellDim
+	zscale = cellDim * 0.3
+	xyscale = cellDim
+}
 
 // Project applies an isometric projection to the passed points.
 func project(x, y, z float64) (float64, float64) {
-	// Scale x and y.
-	// TODO: scaling probably belong outide of project().
-	x = xyrange * (x/cells - 0.5)
-	y = xyrange * (y/cells - 0.5)
-
-	sx := width/2.0 + (x-y)*cos30*xyscale
-	sy := height/2.0 + (x+y)*sin30 - x*zscale
-
+	sx := width + (x-y)*cos30*xyscale
+	sy := (x+y)*sin30*xyscale - z*zscale
 	return sx, sy
 }
 
@@ -79,68 +82,28 @@ func getPolyPoints(
 	dx, dy := project(float64(cellD.X), float64(cellD.Y), cellD.Max)
 
 	// TODO: redo with vals truncated to ints. Or floats... int may be premature optimization.
-	return fmt.Sprintf("%f,%f %f,%f %f,%f %f,%f", ax, ay, bx, by, cx, cy, dx, dy)
-}
-
-func (vf *ValueFunction) Parse(
-	t *template.Template,
-) (name string, err error) {
-	// FUTURE: disambiguate the id and template name. Conflating them like this prevents multiple instatiations of views, for instance.
-	name = vf.id
-	addedMap := template.FuncMap{
-		"getPolyPoints": getPolyPoints,
-	}
-	_, err = t.Funcs(addedMap).Parse(
-		`{{ define "` + name + `" }}
-		<div>
-			{{ $x_cells := len . }}
-			{{ $y_cells := len (index . 0) }}
-			{{ $num_x_polys := sub $x_cells 1 }}
-			{{ $num_y_polys := sub $y_cells 1 }}
-			{{ $cell_width := 100 }}
-			{{ $cell_height := $cell_width }}
-			{{ $width := mult $cell_width $x_cells }}
-			{{ $height := mult $cell_height $y_cells }}
-			{{ $half_height := div $cell_height 2 }}
-			{{ $half_width := div $cell_width 2 }}
-			<svg id="` + vf.id + `"
-				width="{{ add $width 1 }}px"
-				height="{{ add $height 1 }}px"
-				style="shape-rendering: crispEdges;">
-				{{ $cells := . }}
-				{{ range $ri, $row := . }}
-					{{ if lt $ri $num_x_polys }}
-						{{ range $ci, $cell := $row }}
-							{{ if lt $ci $num_y_polys }}
-								<polygon 
-									fill="none"
-									stroke="black"
-									id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
-									{{ $cell_a := index $cells $ri $ci }}
-									{{ $cell_b := index $cells $ri (add $ci 1) }}
-									{{ $cell_c := index $cells (add $ri 1) (add $ci 1) }}
-									{{ $cell_d := index $cells (add $ri 1) $ci }}
-									points="{{ getPolyPoints $cell_a $cell_b $cell_c $cell_d }}" />
-							{{ end }}
-						{{ end }}
-					{{ end }}
-				{{ end }}
-			</svg>
-		</div>
-		{{ end }}`)
-	return
+	return fmt.Sprintf("%d,%d %d,%d %d,%d %d,%d",
+		int(ax), int(ay),
+		int(bx), int(by),
+		int(cx), int(cy),
+		int(dx), int(dy),
+	)
 }
 
 // Returns the set of view updates needed for the view to reflect current values.
 func (vf *ValueFunction) onUpdate(
 	cells [][]Cell,
 ) (ops []fastview.EleUpdate) {
+
+	setViewParams.Do(func() { setParams(cells) })
+
 	for ri, row := range cells[:len(cells)-1] {
 		for ci, cell := range row[:len(row)-1] {
-			cellA := cells[ri][ci]
-			cellB := cells[ri][ci+1]
-			cellC := cells[ri+1][ci+1]
-			cellD := cells[ri+1][ci]
+			// FUTURE: its a matter for future optimization, but note the loop iteration leads to repeated calculation for many cells.
+			cellA := cells[ri][ci+1]
+			cellB := cells[ri][ci]
+			cellC := cells[ri][ci+1]
+			cellD := cells[ri+1][ci+1]
 
 			ops = append(ops, fastview.EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-value-polygon", cell.X, cell.Y),
@@ -154,6 +117,54 @@ func (vf *ValueFunction) onUpdate(
 		}
 	}
 
-	//fmt.Println(ops)
+	//fmt.Println(len(ops))
+	return
+}
+
+func (vf *ValueFunction) Parse(
+	t *template.Template,
+) (name string, err error) {
+	// FUTURE: disambiguate the id and template name. Conflating them like this prevents multiple instatiations of views, for instance.
+	name = vf.id
+	addedMap := template.FuncMap{
+		"getPolyPoints": getPolyPoints,
+	}
+	_, err = t.Funcs(addedMap).Parse(
+		`{{ define "` + name + `" }}
+		<div style="padding:40px;">
+			{{ $x_cells := len . }}
+			{{ $y_cells := len (index . 0) }}
+			{{ $num_x_polys := sub $x_cells 1 }}
+			{{ $num_y_polys := sub $y_cells 1 }}
+			{{ $cell_width := ` + fmt.Sprintf("%d", int(cellDim)) + ` }}
+			{{ $cell_height := $cell_width }}
+			{{ $width := mult $cell_width $x_cells }}
+			{{ $height := mult $cell_height $y_cells }}
+			{{ $half_height := div $cell_height 2 }}
+			{{ $half_width := div $cell_width 2 }}
+			<svg id="` + vf.id + `" xmlns='http://www.w3.org/2000/svg'
+				width="{{ mult $width 2 }}px"
+				height="{{ mult $height 2 }}px"
+				style="shape-rendering: crispEdges; stroke: black; stroke-opacity: 0.9; stroke-width: 2;">
+				<g style="scale: 0.75;" >
+				{{ $cells := . }}
+				{{ range $ri, $row := . }}
+					{{ if lt $ri $num_x_polys }}
+						{{ range $ci, $cell := $row }}
+							{{ if lt $ci $num_y_polys }}
+								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
+									{{ $cell_a := index $cells $ri (add $ci 1) }}
+									{{ $cell_b := index $cells $ri $ci }}
+									{{ $cell_c := index $cells (add $ri 1) $ci }}
+									{{ $cell_d := index $cells (add $ri 1) (add $ci 1) }}
+									points="{{ getPolyPoints $cell_a $cell_b $cell_c $cell_d }}" />
+							{{ end }}
+						{{ end }}
+					{{ end }}
+				{{ end }}
+				</g>
+			</svg>
+		</div>
+		{{ end }}`)
 	return
 }

@@ -23,6 +23,8 @@ type Cell struct {
 }
 
 // Convert transforms the passed state models into Cells for consumption by values-views.
+// The y indices into [][]Cell matrix are flipped per svg y-axis orientation, where 0 is the top of
+// the coordinate system.
 // TODO: where can this live? Is reorg needed? Notice how this references model.State and helpers.
 // I suppose this is fine, but re-evaluate.
 func Convert(states [][][][]models.State) (cells [][]Cell) {

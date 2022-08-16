@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -80,13 +79,13 @@ func NewServer(
 		WithContext(ctx).
 		WithModel(cell_views.Convert).
 		WithView(func(
-			cellUpdates <-chan [][]cell_views.Cell,
-			done <-chan struct{}) fastview.ViewComponent {
+			done <-chan struct{},
+			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
 			return cell_views.NewValuesGrid("valuesgrid", cellUpdates, done)
 		}).
 		WithView(func(
-			cellUpdates <-chan [][]cell_views.Cell,
-			done <-chan struct{}) fastview.ViewComponent {
+			done <-chan struct{},
+			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
 			return cell_views.NewValueFunction("valuefunction", cellUpdates, done)
 		}).
 		Build()
@@ -114,7 +113,7 @@ func NewServer(
 
 func (server *Server) Serve() {
 	http.HandleFunc("/", server.serveIndex)
-	http.HandleFunc("/ws", server.serve_websocket)
+	http.HandleFunc("/ws", server.serveWebsocket)
 	//http.HandleFunc("/profile", pprof.Profile)
 	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
 	// the port number to connect to the web socket.
@@ -135,40 +134,38 @@ func fanIn(
 	for i, view := range views {
 		inputs[i] = view.Updates()
 	}
-	return throttle(
+	return batchify(
 		done,
 		channerics.Merge(done, inputs...),
-		time.Millisecond)
+		time.Millisecond*20)
 }
 
-// throttle batches and sends values from the input channel at the passed rate.
-// This can be useful when multiple channels produce values independently but driven
-// by the same event transactions, such as a single upstream data source.
-// TODO: consider elevating to channerics; though this could be more generic (batching
-// by time, num items, or other criteria).
-// NOTE: the poor synchronicity of time-delayed batching seems like a code smell. Evaluate
-// if/when refactoring the server. For example note the property that chaining throttles
-// together results in additive delays, whereas it would be desirable for a chain to throttle
-// only for the max of all their throttles.
-func throttle[T any](
+// batchify batches within the passed time frame before sending, over-writing previously
+// received values with the same ele-id. Uniquifying in this manner ensures that redundant
+// updates for the same ele-id are not sent.
+func batchify(
 	done <-chan struct{},
-	source <-chan []T,
-	rate time.Duration, // Could @rate, the throttle condition, be a func() bool instead?
-) <-chan []T {
-	output := make(chan []T)
+	source <-chan []fastview.EleUpdate,
+	rate time.Duration,
+) <-chan []fastview.EleUpdate {
+	output := make(chan []fastview.EleUpdate)
 
 	go func() {
 		defer close(output)
-		batch := []T{}
+		data := map[string]fastview.EleUpdate{}
 		last := time.Now()
-		for data := range channerics.OrDone(done, source) {
-			// TODO: this is unbounded growth within a time frame.
-			batch = append(batch, data...)
-			if time.Since(last) > rate {
+		for updates := range channerics.OrDone(done, source) {
+			// Intentionally overwrites pre-exisiting values for an ele-id within this batch's time frame.
+			for _, update := range updates {
+				data[update.EleId] = update
+			}
+
+			if time.Since(last) > rate && len(updates) > 0 {
 				select {
-				case output <- batch:
+				case output <- slicedVals(data):
+					//fmt.Printf("Sent: %d\n", len(data))
+					data = map[string]fastview.EleUpdate{}
 					last = time.Now()
-					batch = batch[:0]
 				case <-done:
 					return
 				}
@@ -179,11 +176,19 @@ func throttle[T any](
 	return output
 }
 
-// serve_websocket publishes state updates to the client via websocket.
+// returns the values of a map as a slice
+func slicedVals[T1 comparable, T2 any](mp map[T1]T2) (sliced []T2) {
+	for _, v := range mp {
+		sliced = append(sliced, v)
+	}
+	return
+}
+
+// serveWebsocket publishes state updates to the client via websocket.
 // TODO: managing multiple websockets, when multiple pages open, etc. These scenarios.
 // This currently assumes this handler is hit only once, one client.
 // TODO: handle closure and failure paths for websocket.
-func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
+func (server *Server) serveWebsocket(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -206,13 +211,7 @@ func (server *Server) publishUpdates(ws *websocket.Conn) {
 	publish := func(updates []fastview.EleUpdate) <-chan error {
 		errs := make(chan error)
 		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					errs <- errors.New(fmt.Sprintf("%v %t %d", err, updates == nil, len(updates)))
-				}
-				close(errs)
-			}()
-
+			defer close(errs)
 			if err := ws.WriteJSON(updates); err != nil {
 				errs <- err
 			}
