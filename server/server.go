@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -80,14 +81,12 @@ func NewServer(
 		WithModel(cell_views.Convert).
 		WithView(func(
 			cellUpdates <-chan [][]cell_views.Cell,
-			done <-chan struct{},
-		) fastview.ViewComponent {
+			done <-chan struct{}) fastview.ViewComponent {
 			return cell_views.NewValuesGrid("valuesgrid", cellUpdates, done)
 		}).
 		WithView(func(
 			cellUpdates <-chan [][]cell_views.Cell,
-			done <-chan struct{},
-		) fastview.ViewComponent {
+			done <-chan struct{}) fastview.ViewComponent {
 			return cell_views.NewValueFunction("valuefunction", cellUpdates, done)
 		}).
 		Build()
@@ -205,14 +204,20 @@ func (server *Server) serve_websocket(w http.ResponseWriter, r *http.Request) {
 // state chan; this will surely change as code develops, be mindful of upstream effects.
 func (server *Server) publishUpdates(ws *websocket.Conn) {
 	publish := func(updates []fastview.EleUpdate) <-chan error {
-		errchan := make(chan error)
+		errs := make(chan error)
 		go func() {
-			defer close(errchan)
+			defer func() {
+				if err := recover(); err != nil {
+					errs <- errors.New(fmt.Sprintf("%v %t %d", err, updates == nil, len(updates)))
+				}
+				close(errs)
+			}()
+
 			if err := ws.WriteJSON(updates); err != nil {
-				errchan <- err
+				errs <- err
 			}
 		}()
-		return errchan
+		return errs
 	}
 	last := time.Now()
 	resolution := time.Millisecond * 200

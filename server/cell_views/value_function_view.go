@@ -7,6 +7,7 @@ package cell_views
 import (
 	"fmt"
 	"html/template"
+	"math"
 	"strings"
 	"tabular/server/fastview"
 
@@ -38,6 +39,31 @@ func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 	return vf.updates
 }
 
+const (
+	// TODO: some of these are parameters that must be set per the first [][]Cell update dimensions.
+	width, height = 600, 320            // canvas size in pixels
+	cells         = 10                  // number of grid cells
+	xyrange       = 10.0                // axis ranges (-xyrange..+xyrange)
+	xyscale       = width / 2 / xyrange // pixels per x or y unit
+	zscale        = height * 0.4        // pixels per z unit
+	angle         = math.Pi / 6         // angle of x, y axes (=30°)
+)
+
+var sin30, cos30 = math.Sin(angle), math.Cos(angle) // sin(30°), cos(30°)
+
+// Project applies an isometric projection to the passed points.
+func project(x, y, z float64) (float64, float64) {
+	// Scale x and y.
+	// TODO: scaling probably belong outide of project().
+	x = xyrange * (x/cells - 0.5)
+	y = xyrange * (y/cells - 0.5)
+
+	sx := width/2.0 + (x-y)*cos30*xyscale
+	sy := height/2.0 + (x+y)*sin30 - x*zscale
+
+	return sx, sy
+}
+
 // getPolyPoints returns an svg polygon describing these four, adjacent cells.
 // Cell-A is bottom left, Cell-B is top left, Cell-C is top right, and Cell-D is bottom right.
 // The polygon is projected into 2d using the lissajous transformation described in The Go Programming Language.
@@ -47,12 +73,13 @@ func getPolyPoints(
 	cellC Cell,
 	cellD Cell,
 ) string {
-	ax, ay := cellA.X*50, cellA.Y*50
-	bx, by := cellB.X*50, cellB.Y*50
-	cx, cy := cellC.X*50, cellC.Y*50
-	dx, dy := cellD.X*50, cellD.Y*50
+	ax, ay := project(float64(cellA.X), float64(cellA.Y), cellA.Max)
+	bx, by := project(float64(cellB.X), float64(cellB.Y), cellB.Max)
+	cx, cy := project(float64(cellC.X), float64(cellC.Y), cellC.Max)
+	dx, dy := project(float64(cellD.X), float64(cellD.Y), cellD.Max)
 
-	return fmt.Sprintf("%d,%d %d,%d %d,%d %d,%d", ax, ay, bx, by, cx, cy, dx, dy)
+	// TODO: redo with vals truncated to ints. Or floats... int may be premature optimization.
+	return fmt.Sprintf("%f,%f %f,%f %f,%f %f,%f", ax, ay, bx, by, cx, cy, dx, dy)
 }
 
 func (vf *ValueFunction) Parse(
@@ -88,7 +115,7 @@ func (vf *ValueFunction) Parse(
 								<polygon 
 									fill="none"
 									stroke="black"
-									id="{{ $cell.X }}-{{ $cell.Y }}-value-polygon"
+									id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
 									{{ $cell_a := index $cells $ri $ci }}
 									{{ $cell_b := index $cells $ri (add $ci 1) }}
 									{{ $cell_c := index $cells (add $ri 1) (add $ci 1) }}
@@ -108,16 +135,25 @@ func (vf *ValueFunction) Parse(
 func (vf *ValueFunction) onUpdate(
 	cells [][]Cell,
 ) (ops []fastview.EleUpdate) {
-	for _, row := range cells {
-		for _, cell := range row {
-			// Update the value text
+	for ri, row := range cells[:len(cells)-1] {
+		for ci, cell := range row[:len(row)-1] {
+			cellA := cells[ri][ci]
+			cellB := cells[ri][ci+1]
+			cellC := cells[ri+1][ci+1]
+			cellD := cells[ri+1][ci]
+
 			ops = append(ops, fastview.EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-value-polygon", cell.X, cell.Y),
-				Ops:   []fastview.Op{
-					//{Key: "points", Value: fmt.Sprintf("%.2f", cell.Max)},
+				Ops: []fastview.Op{
+					{
+						Key:   "points",
+						Value: getPolyPoints(cellA, cellB, cellC, cellD),
+					},
 				},
 			})
 		}
 	}
+
+	//fmt.Println(ops)
 	return
 }
