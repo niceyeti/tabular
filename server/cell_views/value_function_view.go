@@ -47,11 +47,11 @@ var (
 	cells         float64                 // number of grid cells
 	xyscale       float64                 // pixels per x or y unit
 	zscale        float64                 // pixels per z unit
-	ang30                   = math.Pi / 6 // angle of x, y axes (=30°)
+	ang                     = math.Pi / 8 // angle of x, y axes (e.g. =30°)
 	setViewParams sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
 )
 
-var sin30, cos30 = math.Sin(ang30), math.Cos(ang30) // sin(30°), cos(30°)
+var sinAng, cosAng = math.Sin(ang), math.Cos(ang)
 
 func setParams(cs [][]Cell) {
 	cells = float64(len(cs))
@@ -62,8 +62,8 @@ func setParams(cs [][]Cell) {
 
 // Project applies an isometric projection to the passed points.
 func project(x, y, z float64) (float64, float64) {
-	sx := width + (x-y)*cos30*xyscale
-	sy := (x+y)*sin30*xyscale - z*zscale
+	sx := width + (x-y)*cosAng*xyscale
+	sy := (x+y)*sinAng*xyscale - z*zscale
 	return sx, sy
 }
 
@@ -100,7 +100,7 @@ func (vf *ValueFunction) onUpdate(
 	for ri, row := range cells[:len(cells)-1] {
 		for ci, cell := range row[:len(row)-1] {
 			// FUTURE: its a matter for future optimization, but note the loop iteration leads to repeated calculation for many cells.
-			cellA := cells[ri][ci+1]
+			cellA := cells[ri+1][ci]
 			cellB := cells[ri][ci]
 			cellC := cells[ri][ci+1]
 			cellD := cells[ri+1][ci+1]
@@ -145,14 +145,14 @@ func (vf *ValueFunction) Parse(
 			<svg id="` + vf.id + `" xmlns='http://www.w3.org/2000/svg'
 				width="{{ mult $width 2 }}px"
 				height="{{ mult $height 2 }}px"
-				style="shape-rendering: crispEdges; stroke: black; stroke-opacity: 0.9; stroke-width: 2;">
+				style="shape-rendering: crispEdges; stroke: black; stroke-opacity: 0.8; stroke-width: 2;">
 				<g style="scale: 0.75;" >
 				{{ $cells := . }}
 				{{ range $ri, $row := . }}
 					{{ if lt $ri $num_x_polys }}
 						{{ range $ci, $cell := $row }}
 							{{ if lt $ci $num_y_polys }}
-								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
+								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon" fill="lightgrey" 
 									{{ $cell_a := index $cells $ri (add $ci 1) }}
 									{{ $cell_b := index $cells $ri $ci }}
 									{{ $cell_c := index $cells (add $ri 1) $ci }}
