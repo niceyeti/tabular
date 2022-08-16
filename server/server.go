@@ -296,11 +296,14 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	// is weird about passing this down. A shared func map smells like distorted encapsulation,
 	// though Funcs() does specify that a template may override func-map entries.
 	t := template.New("index").Funcs(funcMap)
-	viewTemplates := []*template.Template{}
+	viewTemplates := []string{}
 	for _, vc := range server.views {
-		vt := template.Must(vc.Template(funcMap))
-		viewTemplates = append(viewTemplates, vt)
-		template.Must(t.AddParseTree(vt.Name(), vt.Tree))
+		if name, err := vc.Parse(t); err != nil {
+			fmt.Println("View rejected: ", err)
+			continue
+		} else {
+			viewTemplates = append(viewTemplates, name)
+		}
 	}
 
 	// TODO: isn't there recursive relationship here wrt to writers of the textual part of the templates?
@@ -313,7 +316,6 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		<head>
 			<link rel="icon" href="data:,">
 			<!--This is the client bootstrap code by which the server pushes new data to the view via websocket.-->
-			{{ $component_name := "value-function-svg" }}
 			<script>
 				const ws = new WebSocket("ws://localhost:8080/ws");
 				ws.onopen = function (event) {
@@ -329,7 +331,6 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 				ws.onmessage = function (event) {
 					items = JSON.parse(event.data)
 					// FUTURE: scope the updates per view. Not really needed now, just grab them by id from doc level.
-					//const values_ele = document.getElementById({{ $component_name }});
 					// Iterate the data updates
 					for (const update of items) {
 						const ele = document.getElementById(update.EleId)
@@ -347,9 +348,9 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		<body>
 		`
 
-	for _, vt := range viewTemplates[1:] {
+	for _, name := range viewTemplates {
 		// Specify the nested template and pass in its params
-		indexTemplate += `{{ template "` + vt.Name() + `" . }}`
+		indexTemplate += `{{ template "` + name + `" . }}`
 	}
 
 	indexTemplate += `

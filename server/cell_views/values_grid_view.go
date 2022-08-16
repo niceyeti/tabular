@@ -35,11 +35,14 @@ func (vg *ValuesGrid) Updates() <-chan []fastview.EleUpdate {
 	return vg.updates
 }
 
-func (vg *ValuesGrid) Template(
-	func_map template.FuncMap,
-) (t *template.Template, err error) {
-	return template.New(vg.id).Funcs(func_map).Parse(
-		`<div id="state_values">
+func (vg *ValuesGrid) Parse(
+	parent *template.Template,
+) (name string, err error) {
+	// FUTURE: disambiguate the id and template name. Conflating them like this prevents multiple instatiations of views, for instance.
+	name = vg.id
+	_, err = parent.Parse(
+		`{{ define "` + name + `" }}
+		<div>
 			{{ $x_cells := len . }}
 			{{ $y_cells := len (index . 0) }}
 			{{ $cell_width := 100 }}
@@ -63,14 +66,14 @@ func (vg *ValuesGrid) Template(
 							fill="{{ $cell.Fill }}"
 							stroke="black"
 							stroke-width="1"/>
-						<text id="{{$cell.X}}-{{$cell.Y}}-value-text"
+						<text id="{{ $cell.X }}-{{ $cell.Y }}-value-text"
 							x="{{ add (mult $cell.X $cell_width) $half_width }}" 
 							y="{{ add (mult $cell.Y $cell_height) (sub $half_height 10) }}" 
 							stroke="blue"
 							dominant-baseline="text-top" text-anchor="middle"
 							>{{ printf "%.2f" $cell.Max }}</text>
 						<g transform="translate({{ add (mult $cell.X $cell_width) $half_width }}, {{ add (mult $cell.Y $cell_height) (add $half_height 20)  }})">
-							<text id="{{$cell.X}}-{{$cell.Y}}-policy-arrow"
+							<text id="{{ $cell.X }}-{{ $cell.Y }}-policy-arrow"
 							stroke="blue" stroke-width="1"
 							dominant-baseline="central" text-anchor="middle"
 							transform="rotate({{ $cell.PolicyArrowRotation }})"
@@ -80,7 +83,9 @@ func (vg *ValuesGrid) Template(
 					{{ end }}
 				{{ end }}
 			</svg>
-		</div>`)
+		</div>
+		{{ end }}`)
+	return
 }
 
 // Returns the set of view updates needed for the view to reflect current values.

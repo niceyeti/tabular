@@ -33,6 +33,7 @@ func NewValueFunction(
 	return
 }
 
+// TODO: Updates() is weird and seemingly trivial. Should this be done otherwise?
 func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 	return vf.updates
 }
@@ -54,14 +55,17 @@ func getPolyPoints(
 	return fmt.Sprintf("%d,%d %d,%d %d,%d %d,%d", ax, ay, bx, by, cx, cy, dx, dy)
 }
 
-func (vf *ValueFunction) Template(
-	funcMap template.FuncMap,
-) (t *template.Template, err error) {
+func (vf *ValueFunction) Parse(
+	t *template.Template,
+) (name string, err error) {
+	// FUTURE: disambiguate the id and template name. Conflating them like this prevents multiple instatiations of views, for instance.
+	name = vf.id
 	addedMap := template.FuncMap{
 		"getPolyPoints": getPolyPoints,
 	}
-	return template.New(vf.id).Funcs(funcMap).Funcs(addedMap).Parse(
-		`<div id="value_function">
+	_, err = t.Funcs(addedMap).Parse(
+		`{{ define "` + name + `" }}
+		<div>
 			{{ $x_cells := len . }}
 			{{ $y_cells := len (index . 0) }}
 			{{ $num_x_polys := sub $x_cells 1 }}
@@ -95,7 +99,9 @@ func (vf *ValueFunction) Template(
 					{{ end }}
 				{{ end }}
 			</svg>
-		</div>`)
+		</div>
+		{{ end }}`)
+	return
 }
 
 // Returns the set of view updates needed for the view to reflect current values.

@@ -33,11 +33,13 @@ type Op struct {
 // to an output stream and Updates to obtain the chan by which ele-updates are notified.
 type ViewComponent interface {
 	Updates() <-chan []EleUpdate
-	// Seems robust enough. I vacillated between Template and simply io.Writer, by which each
-	// view simply writes its full text. But templates seem an appropriate view description,
-	// and allows passing a func map. It seems a question of layering, and this seems appropriate
-	// to a view.
-	Template(template.FuncMap) (t *template.Template, err error)
+	// Parse parses the view-component and adds it to the passed parent template, thus inheriting
+	// or possibly extending its definition (func-map, etc). This allows recursively definition
+	// view-components. Not sure this is the best design, but worked a posteriori.
+	// TODO: a code-smell with this is that the child may rely on the parent's func-map definition;
+	// it can extend that definition, or assume it exists and fail when Execute() is called. Depending
+	// on something global/non-local is poor composition.
+	Parse(*template.Template) (string, error)
 }
 
 type ViewBuilder[DataModel any, ViewModel any] struct {
