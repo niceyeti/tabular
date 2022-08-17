@@ -1,3 +1,4 @@
+// cell_views contains views derived from the Cell view-model.
 package cell_views
 
 import (

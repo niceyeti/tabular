@@ -1,7 +1,3 @@
-// cell_views contains views which can be derived from the Cell view-model.
-// Cell is merely an arbitrary representation that makes it easier to translate
-// State updates to svg updates.
-
 package cell_views
 
 import (
@@ -98,7 +94,10 @@ func (vg *ValuesGrid) onUpdate(
 			ops = append(ops, fastview.EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-value-text", cell.X, cell.Y),
 				Ops: []fastview.Op{
-					{Key: "textContent", Value: fmt.Sprintf("%.2f", cell.Max)},
+					{
+						Key:   "textContent",
+						Value: fmt.Sprintf("%.2f", cell.Max),
+					},
 				},
 			})
 			// Update the policy arrow indicators
@@ -106,8 +105,14 @@ func (vg *ValuesGrid) onUpdate(
 				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
 				Ops: []fastview.Op{
 					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
-					{Key: "transform", Value: fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation)},
-					{Key: "stroke-width", Value: fmt.Sprintf("%d", cell.PolicyArrowScale)},
+					{
+						Key:   "transform",
+						Value: fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation),
+					},
+					{
+						Key:   "stroke-width",
+						Value: fmt.Sprintf("%d", cell.PolicyArrowScale),
+					},
 				},
 			})
 		}

@@ -1,7 +1,3 @@
-// cell_views contains views which can be derived from the Cell view-model.
-// Cell is merely an arbitrary representation that makes it easier to translate
-// State updates to svg updates.
-
 package cell_views
 
 import (
@@ -42,7 +38,7 @@ func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 
 var (
 	// TODO: some of these are parameters that must be set per the first [][]Cell update dimensions.
-	width         float64                 // canvas size in pixels
+	width, height float64                 // canvas size in pixels
 	cellDim       float64   = 100         // Cell height/width size in pixels
 	cells         float64                 // number of grid cells
 	xyscale       float64                 // pixels per x or y unit
@@ -56,14 +52,15 @@ var sinAng, cosAng = math.Sin(ang), math.Cos(ang)
 func setParams(cs [][]Cell) {
 	cells = float64(len(cs))
 	width = cells * cellDim
+	height = float64(len(cs[0])) * cellDim
 	zscale = cellDim * 0.3
 	xyscale = cellDim
 }
 
 // Project applies an isometric projection to the passed points.
 func project(x, y, z float64) (float64, float64) {
-	sx := width + (x-y)*cosAng*xyscale
-	sy := (x+y)*sinAng*xyscale - z*zscale
+	sx := 1.5*width + (x-y)*cosAng*xyscale
+	sy := 0.25*height + (x+y)*sinAng*xyscale - z*zscale
 	return sx, sy
 }
 
@@ -99,7 +96,7 @@ func (vf *ValueFunction) onUpdate(
 
 	for ri, row := range cells[:len(cells)-1] {
 		for ci, cell := range row[:len(row)-1] {
-			// FUTURE: its a matter for future optimization, but note the loop iteration leads to repeated calculation for many cells.
+			// FUTURE: (optimization) loop iteration leads to repeated calculation for many cells.
 			cellA := cells[ri+1][ci]
 			cellB := cells[ri][ci]
 			cellC := cells[ri][ci+1]
@@ -117,10 +114,10 @@ func (vf *ValueFunction) onUpdate(
 		}
 	}
 
-	//fmt.Println(len(ops))
 	return
 }
 
+// Parse returns an svg of polygons plotting that values function surface as a 2D projection.
 func (vf *ValueFunction) Parse(
 	t *template.Template,
 ) (name string, err error) {
@@ -129,6 +126,8 @@ func (vf *ValueFunction) Parse(
 	addedMap := template.FuncMap{
 		"getPolyPoints": getPolyPoints,
 	}
+	// Note: the order of polygon creation forms a nice visual surface by obscuring prior polygons. Order matters.
+	// Scale and height/width are also poorly parameterized, basically hardcoded to loosely center most surfaces.
 	_, err = t.Funcs(addedMap).Parse(
 		`{{ define "` + name + `" }}
 		<div style="padding:40px;">
@@ -146,16 +145,18 @@ func (vf *ValueFunction) Parse(
 				width="{{ mult $width 2 }}px"
 				height="{{ mult $height 2 }}px"
 				style="shape-rendering: crispEdges; stroke: black; stroke-opacity: 0.8; stroke-width: 2;">
-				<g style="scale: 0.75;" >
+				<g style="scale: 0.7;" >
 				{{ $cells := . }}
-				{{ range $ri, $row := . }}
+				{{ range $ri, $row := $cells }}
 					{{ if lt $ri $num_x_polys }}
-						{{ range $ci, $cell := $row }}
+						{{ range $j, $unused := $row }}
+							{{ $ci := sub (sub (len $row) $j) 1 }} 
+							{{ $cell := index $row $ci }}
 							{{ if lt $ci $num_y_polys }}
 								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon" fill="lightgrey" 
-									{{ $cell_a := index $cells $ri (add $ci 1) }}
+									{{ $cell_a := index $cells (add $ri 1) $ci }}
 									{{ $cell_b := index $cells $ri $ci }}
-									{{ $cell_c := index $cells (add $ri 1) $ci }}
+									{{ $cell_c := index $cells $ri (add $ci 1) }}
 									{{ $cell_d := index $cells (add $ri 1) (add $ci 1) }}
 									points="{{ getPolyPoints $cell_a $cell_b $cell_c $cell_d }}" />
 							{{ end }}
