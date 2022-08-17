@@ -362,7 +362,7 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	</html>
 	`
 
-	fmt.Println(indexTemplate)
+	//fmt.Println(indexTemplate)
 
 	var err error
 	if t, err = t.Parse(indexTemplate); err != nil {

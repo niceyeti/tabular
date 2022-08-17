@@ -38,12 +38,13 @@ func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 
 var (
 	// TODO: some of these are parameters that must be set per the first [][]Cell update dimensions.
-	width, height float64                 // canvas size in pixels
-	cellDim       float64   = 100         // Cell height/width size in pixels
-	cells         float64                 // number of grid cells
-	xyscale       float64                 // pixels per x or y unit
-	zscale        float64                 // pixels per z unit
-	ang                     = math.Pi / 8 // angle of x, y axes (e.g. =30°)
+	width, height float64      // canvas size in pixels
+	cellDim       float64 = 80 // Cell height/width size in pixels
+	cells         float64      // number of grid cells
+	xyscale       float64      // pixels per x or y unit
+	zscale        float64      // pixels per z unit
+	// ang could easily be a dynamic parameter, from the user or otherwise, for a fixed set of view angles (30, 45, etc.)
+	ang                     = math.Pi / 6 // angle of x, y axes (e.g. =30°)
 	setViewParams sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
 )
 
@@ -59,12 +60,11 @@ func setParams(cs [][]Cell) {
 
 // Project applies an isometric projection to the passed points.
 func project(x, y, z float64) (float64, float64) {
-	sx := 1.5*width + (x-y)*cosAng*xyscale
-	sy := 0.25*height + (x+y)*sinAng*xyscale - z*zscale
+	sx := (x - y) * cosAng * xyscale
+	sy := (x+y)*sinAng*xyscale - z*zscale
 	return sx, sy
 }
 
-// getPolyPoints returns an svg polygon describing these four, adjacent cells.
 // Cell-A is bottom left, Cell-B is top left, Cell-C is top right, and Cell-D is bottom right.
 // The polygon is projected into 2d using the lissajous transformation described in The Go Programming Language.
 func getPolyPoints(
@@ -73,18 +73,75 @@ func getPolyPoints(
 	cellC Cell,
 	cellD Cell,
 ) string {
-	ax, ay := project(float64(cellA.X), float64(cellA.Y), cellA.Max)
-	bx, by := project(float64(cellB.X), float64(cellB.Y), cellB.Max)
-	cx, cy := project(float64(cellC.X), float64(cellC.Y), cellC.Max)
-	dx, dy := project(float64(cellD.X), float64(cellD.Y), cellD.Max)
+	return makeFuncPolygon("", cellA, cellB, cellC, cellD).String()
+}
 
-	// TODO: redo with vals truncated to ints. Or floats... int may be premature optimization.
+// Returns an svg polygon describing these four, adjacent cells.
+// The polygon is projected into 2d using a similar to the lissajous transformation described in The Go Programming Language.
+func makeFuncPolygon(
+	id string,
+	cellA Cell,
+	cellB Cell,
+	cellC Cell,
+	cellD Cell,
+) (fp *funcPolygon) {
+	fp = &funcPolygon{
+		Id: id,
+	}
+	fp.ax, fp.ay = project(float64(cellA.X), float64(cellA.Y), cellA.Max)
+	fp.bx, fp.by = project(float64(cellB.X), float64(cellB.Y), cellB.Max)
+	fp.cx, fp.cy = project(float64(cellC.X), float64(cellC.Y), cellC.Max)
+	fp.dx, fp.dy = project(float64(cellD.X), float64(cellD.Y), cellD.Max)
+	return
+}
+
+type funcPolygon struct {
+	Id     string
+	ax, ay float64
+	bx, by float64
+	cx, cy float64
+	dx, dy float64
+}
+
+// String returns a string suitable for the svg-polygon 'points' attribute.
+// The values are truncated to ints, which is a bit of premature svg-optimization.
+func (fp *funcPolygon) String() string {
 	return fmt.Sprintf("%d,%d %d,%d %d,%d %d,%d",
-		int(ax), int(ay),
-		int(bx), int(by),
-		int(cx), int(cy),
-		int(dx), int(dy),
+		int(fp.ax), int(fp.ay),
+		int(fp.bx), int(fp.by),
+		int(fp.cx), int(fp.cy),
+		int(fp.dx), int(fp.dy),
 	)
+}
+
+func minFour(f1, f2, f3, f4 float64) float64 {
+	return math.Min(
+		math.Min(f1, f2),
+		math.Min(f3, f4),
+	)
+}
+
+func maxFour(f1, f2, f3, f4 float64) float64 {
+	return math.Max(
+		math.Max(f1, f2),
+		math.Max(f3, f4),
+	)
+}
+
+func (fp *funcPolygon) MinX() float64 {
+	return minFour(fp.ax, fp.bx, fp.cx, fp.dx)
+}
+
+func (fp *funcPolygon) MinY() float64 {
+	return minFour(fp.ay, fp.by, fp.cy, fp.dy)
+}
+
+func (fp *funcPolygon) MaxX() float64 {
+	return maxFour(fp.ax, fp.bx, fp.cx, fp.dx)
+}
+
+func (fp *funcPolygon) MaxY() float64 {
+	return maxFour(fp.ay, fp.by, fp.cy, fp.dy)
 }
 
 // Returns the set of view updates needed for the view to reflect current values.
@@ -94,6 +151,9 @@ func (vf *ValueFunction) onUpdate(
 
 	setViewParams.Do(func() { setParams(cells) })
 
+	// First build up the polygons, so we can later center their svg coordinates within the view axe.
+	xmin, ymin := math.MaxFloat64, math.MaxFloat64
+	xmax, ymax := -math.MaxFloat64, -math.MaxFloat64
 	for ri, row := range cells[:len(cells)-1] {
 		for ci, cell := range row[:len(row)-1] {
 			// FUTURE: (optimization) loop iteration leads to repeated calculation for many cells.
@@ -101,18 +161,50 @@ func (vf *ValueFunction) onUpdate(
 			cellB := cells[ri][ci]
 			cellC := cells[ri][ci+1]
 			cellD := cells[ri+1][ci+1]
+			polygon := makeFuncPolygon(
+				fmt.Sprintf("%d-%d-value-polygon", cell.X, cell.Y),
+				cellA, cellB, cellC, cellD,
+			)
+
+			xmin = math.Min(xmin, polygon.MinX())
+			xmax = math.Max(xmax, polygon.MaxX())
+
+			ymin = math.Min(ymin, polygon.MinY())
+			ymax = math.Max(ymax, polygon.MaxY())
 
 			ops = append(ops, fastview.EleUpdate{
-				EleId: fmt.Sprintf("%d-%d-value-polygon", cell.X, cell.Y),
+				EleId: polygon.Id,
 				Ops: []fastview.Op{
 					{
 						Key:   "points",
-						Value: getPolyPoints(cellA, cellB, cellC, cellD),
+						Value: polygon.String(),
 					},
 				},
 			})
 		}
 	}
+
+	// Shift all values by the min x and y to center the view, and scale it down to fit.
+	// FWIW, this could be done using fewer computations with an enclosing <g transform="translate(minx, miny)">
+
+	// Scale down by the maximum required to fit the full plot in view, but only if needed (when scaler < 1.0)
+	scaler := math.Min(
+		math.Min(
+			math.Abs(width/(xmax-xmin)),
+			math.Abs(height/(ymax-ymin)),
+		),
+		1.0,
+	)
+
+	ops = append(ops, fastview.EleUpdate{
+		EleId: vf.id + "-group",
+		Ops: []fastview.Op{
+			{
+				Key:   "transform",
+				Value: fmt.Sprintf("scale(%f) translate(%d %d)", scaler, int(-xmin), int(-ymin)),
+			},
+		},
+	})
 
 	return
 }
@@ -144,8 +236,8 @@ func (vf *ValueFunction) Parse(
 			<svg id="` + vf.id + `" xmlns='http://www.w3.org/2000/svg'
 				width="{{ mult $width 2 }}px"
 				height="{{ mult $height 2 }}px"
-				style="shape-rendering: crispEdges; stroke: black; stroke-opacity: 0.8; stroke-width: 2;">
-				<g style="scale: 0.7;" >
+				style="shape-rendering: crispEdges; stroke: lightgreen; stroke-opacity: 1.0; stroke-width: 3;">
+				<g id="` + vf.id + "-group" + `" transform="translate(0 0)">
 				{{ $cells := . }}
 				{{ range $ri, $row := $cells }}
 					{{ if lt $ri $num_x_polys }}
@@ -153,7 +245,8 @@ func (vf *ValueFunction) Parse(
 							{{ $ci := sub (sub (len $row) $j) 1 }} 
 							{{ $cell := index $row $ci }}
 							{{ if lt $ci $num_y_polys }}
-								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon" fill="lightgrey" 
+								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
+									fill="lightgrey" fill-opacity="0.8"
 									{{ $cell_a := index $cells (add $ri 1) $ci }}
 									{{ $cell_b := index $cells $ri $ci }}
 									{{ $cell_c := index $cells $ri (add $ci 1) }}

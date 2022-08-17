@@ -3,6 +3,7 @@ package cell_views
 import (
 	"fmt"
 	"html/template"
+	"strconv"
 	"strings"
 	"tabular/server/fastview"
 
@@ -31,6 +32,8 @@ func (vg *ValuesGrid) Updates() <-chan []fastview.EleUpdate {
 	return vg.updates
 }
 
+const valuCellDim = 75
+
 func (vg *ValuesGrid) Parse(
 	parent *template.Template,
 ) (name string, err error) {
@@ -41,7 +44,7 @@ func (vg *ValuesGrid) Parse(
 		<div>
 			{{ $x_cells := len . }}
 			{{ $y_cells := len (index . 0) }}
-			{{ $cell_width := 100 }}
+			{{ $cell_width := ` + strconv.FormatInt(valuCellDim, 10) + ` }}
 			{{ $cell_height := $cell_width }}
 			{{ $width := mult $cell_width $x_cells }}
 			{{ $height := mult $cell_height $y_cells }}

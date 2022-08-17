@@ -352,7 +352,7 @@ func alphaMonteCarloVanillaTrain(
 	}
 	episodes := channerics.Merge(done, workers...)
 
-	alpha := 0.1
+	alpha := 0.001
 	gamma := 0.9
 	// Estimator updates state values from agent experiences.
 	estimator := func(
