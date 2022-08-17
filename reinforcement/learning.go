@@ -352,7 +352,8 @@ func alphaMonteCarloVanillaTrain(
 	}
 	episodes := channerics.Merge(done, workers...)
 
-	alpha := 0.001
+	// TODO: I deliberately slowed the agent for monte carlo. Would be nice to grab hyper-params as separate config (file, etc).
+	alpha := 0.0025
 	gamma := 0.9
 	// Estimator updates state values from agent experiences.
 	estimator := func(

@@ -144,12 +144,33 @@ func (fp *funcPolygon) MaxY() float64 {
 	return maxFour(fp.ay, fp.by, fp.cy, fp.dy)
 }
 
+func avg(f ...float64) float64 {
+	n, sum := 0.0, 0.0
+	for _, fn := range f {
+		sum += fn
+		n++
+	}
+	return sum / n
+}
+
 // Returns the set of view updates needed for the view to reflect current values.
 func (vf *ValueFunction) onUpdate(
 	cells [][]Cell,
 ) (ops []fastview.EleUpdate) {
-
+	// TODO: refactor to move/remove
 	setViewParams.Do(func() { setParams(cells) })
+
+	// Get the min and max function values, for plotting pseudo-gradients on the surface.
+	// These determine the logical stop points of the gradient extremes; each polygon is
+	// manually shaded with the average of its four max-values. The alternative to this is
+	// that each polygon has-a linear-gradient than it updates, using some complex math.
+	minVal, maxVal := math.MaxFloat64, -math.MaxFloat64
+	for _, row := range cells {
+		for _, cell := range row {
+			minVal = math.Min(minVal, cell.Max)
+			maxVal = math.Max(maxVal, cell.Max)
+		}
+	}
 
 	// First build up the polygons, so we can later center their svg coordinates within the view axe.
 	xmin, ymin := math.MaxFloat64, math.MaxFloat64
@@ -172,12 +193,19 @@ func (vf *ValueFunction) onUpdate(
 			ymin = math.Min(ymin, polygon.MinY())
 			ymax = math.Max(ymax, polygon.MaxY())
 
+			avgVal := avg(cellA.Max, cellB.Max, cellC.Max, cellD.Max)
+			fill := getRGBFill(avgVal, minVal, maxVal)
+
 			ops = append(ops, fastview.EleUpdate{
 				EleId: polygon.Id,
 				Ops: []fastview.Op{
 					{
 						Key:   "points",
 						Value: polygon.String(),
+					},
+					{
+						Key:   "fill",
+						Value: fill,
 					},
 				},
 			})
@@ -209,6 +237,14 @@ func (vf *ValueFunction) onUpdate(
 	return
 }
 
+// Returns an RGB value defined by where avgVal lies along the number line between minVal and maxVal.
+// Some proportion of RGB values is assigned based on this relative position.
+func getRGBFill(avgVal, minVal, maxVal float64) string {
+	// Allocate fill based on proportion of blue and red only; this should give a basic relative range.
+	redPct := int(100.0 * math.Abs(avgVal) / math.Abs(maxVal-minVal))
+	return fmt.Sprintf("rgb(%d%%,0%%,%d%%)", redPct, 100-redPct)
+}
+
 // Parse returns an svg of polygons plotting that values function surface as a 2D projection.
 func (vf *ValueFunction) Parse(
 	t *template.Template,
@@ -236,7 +272,7 @@ func (vf *ValueFunction) Parse(
 			<svg id="` + vf.id + `" xmlns='http://www.w3.org/2000/svg'
 				width="{{ mult $width 2 }}px"
 				height="{{ mult $height 2 }}px"
-				style="shape-rendering: crispEdges; stroke: lightgreen; stroke-opacity: 1.0; stroke-width: 3;">
+				style="shape-rendering: crispEdges; stroke: lightgrey; stroke-opacity: 1.0; stroke-width: 3;">
 				<g id="` + vf.id + "-group" + `" transform="translate(0 0)">
 				{{ $cells := . }}
 				{{ range $ri, $row := $cells }}
@@ -246,7 +282,7 @@ func (vf *ValueFunction) Parse(
 							{{ $cell := index $row $ci }}
 							{{ if lt $ci $num_y_polys }}
 								<polygon id="{{$cell.X}}-{{$cell.Y}}-value-polygon"
-									fill="lightgrey" fill-opacity="0.8"
+									fill="black" fill-opacity="1.0"
 									{{ $cell_a := index $cells (add $ri 1) $ci }}
 									{{ $cell_b := index $cells $ri $ci }}
 									{{ $cell_c := index $cells $ri (add $ci 1) }}
