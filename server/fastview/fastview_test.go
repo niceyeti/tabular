@@ -23,7 +23,10 @@ func NewTestView(
 				{
 					EleId: datum,
 					Ops: []Op{
-						{Key: "foo", Value: "bar"},
+						{
+							Key:   "foo",
+							Value: "bar",
+						},
 					},
 				},
 			}
