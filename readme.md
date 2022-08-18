@@ -25,11 +25,11 @@ But FWIW, stay out of any self-driving Muskwagen for which there is not comprehe
     2) a declarative go-lang template describing the component's initial structure 
     3) a channel for sending updates to target eles in the client dom
 
-## Key goals
+## Core goals
 
 0) Re-learn some stuff, have fun
 1) Clean, end-to-end observability patterns: data updates should automatically trigger ui updates, end-to-end. This can be achieved easily using event-based programming, but the goal is declarative views with linq-like business logic that is easy to read, share, and maintain.
-2) 
+2) App organization: review uncle bob
 
 ## Future considerations
 0) Server-side virtual dom: this has to have been done elsewhere. Desirably this: arbitrary server-side view components update a server-side dom **D1**, a diffing engine detects these changes, and sends exactly and only these changes to the client. The diffing layer completely decouples view components from update logic; the current code requires them to implement their own updates as EleUpdate's. The diffing layer acts as a throttling mechanism and has some other benefits.
