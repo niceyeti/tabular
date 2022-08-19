@@ -152,6 +152,7 @@ func batchify(
 
 	go func() {
 		defer close(output)
+
 		data := map[string]fastview.EleUpdate{}
 		last := time.Now()
 		for updates := range channerics.OrDone(done, source) {
@@ -278,11 +279,14 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 
-	fmt.Println("parsing...")
-	// Build the template, bind data.
-	// TODO: note the child-template dependency on the func map. Also see the note about the
-	// recursive relationships of the views/templates. The same seems to apply here, whereby
-	// the func-map could be passed down recursively to child components.
+	// Build the func-map, passed recursively to child view components. Note this is a very
+	// kludgy pattern, as a view may specify a function call defined above it, or override/add
+	// other func definitions. Overall this is just stupid loss of control to fight with; the views
+	// should instead add funcs the same way library dependencies are added by calling them. This could
+	// be done a number of ways; every component defines all of the funcs it needs, or they get added
+	// progressively. The requirement is that components/devs must know when they create a conflict.
+	// I don't think this is a hard problem to solve, once one stops approaching it from the confines
+	// of satisfying the template package just to 'make things work', as the current solution does.
 	funcMap := template.FuncMap{
 		"add":  func(i, j int) int { return i + j },
 		"sub":  func(i, j int) int { return i - j },
@@ -295,10 +299,7 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 			return j
 		},
 	}
-	// TODO: the fundamental problem with the func-map is that a template should own/define the
-	// set of functions it intends to use, rather than inheriting them (coupling). Something
-	// is weird about passing this down. A shared func map smells like distorted encapsulation,
-	// though Funcs() does specify that a template may override func-map entries.
+
 	t := template.New("index").Funcs(funcMap)
 	viewTemplates := []string{}
 	for _, vc := range server.views {
@@ -309,10 +310,6 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 			viewTemplates = append(viewTemplates, name)
 		}
 	}
-
-	// TODO: isn't there recursive relationship here wrt to writers of the textual part of the templates?
-	// So for instance each could pass down an io.Writer to build there portion of the tree, with parents
-	// defining the layout of their children to some degree.
 
 	// The main template bootstraps the rest: sets up client websocket and updates, aggregates views.
 	indexTemplate := `<!DOCTYPE html>
@@ -369,6 +366,11 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}
+
+	// RootView(lastUpdate?, done?)
+	// Parse(template) string, err
+	// Updates() <- the final ele-update chan
+	// - has: all the subviews, which it builds using the builder pattern.
 
 	// TODO: this is incomplete abstraction of the views. The last bit of coupling is that
 	// the cells must be passed into the template; the template seems to reside at a higher level

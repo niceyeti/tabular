@@ -6,6 +6,8 @@ github.com/jtolds/gls v4.20.0+incompatible h1:xdiiI2gbIgH/gLH7ADydsJ1uDOEzR8yvV7
 github.com/jtolds/gls v4.20.0+incompatible/go.mod h1:QJZ7F/aHp+rZTRtaJ1ow/lLfFfVYBRgL+9YlvaHOwJU=
 github.com/niceyeti/channerics v0.0.0-20220812195517-6d11c24c6cea h1:Al+rFppTL1WJApO8qNRJ403wFg7dJ08LJrjGfzfzGjI=
 github.com/niceyeti/channerics v0.0.0-20220812195517-6d11c24c6cea/go.mod h1:jJdXsyz47mLTHeqaZ/bcYK00Ckqv6LQRHqbs26eMa9Q=
+github.com/niceyeti/channerics v0.0.0-20220812202906-6b1aaeedc2b8 h1:alOzwnkFnx+HWOv4TW1mJII9eezaWUuG0rSMav/f/Ac=
+github.com/niceyeti/channerics v0.0.0-20220812202906-6b1aaeedc2b8/go.mod h1:jJdXsyz47mLTHeqaZ/bcYK00Ckqv6LQRHqbs26eMa9Q=
 github.com/smartystreets/assertions v1.2.0 h1:42S6lae5dvLc7BrLu/0ugRtcFVjoJNMC/N3yZFZkDFs=
 github.com/smartystreets/assertions v1.2.0/go.mod h1:tcbTF8ujkAEcZ8TElKY+i30BzYlVhC/LOxJk7iOWnoo=
 github.com/smartystreets/goconvey v1.7.2 h1:9RBaZCeXEQ3UselpuwUQHltGVXvdwm6cv1hgR6gDIPg=
