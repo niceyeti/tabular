@@ -6,7 +6,7 @@ Tabular is an app that implements and visualizes tabular RL methods in golang. T
 
 A gif of one of the front-end components, a value-function surface plot, lends some intuition:
 
-![Monte Carlo Value-Function Approximation](./docs/monte_carlo_fn_surface.gif)
+![Monte Carlo Value-Function Plot](./docs/monte_carlo_fn_surface.gif "Monte Carle Value-Function Plot")
 
 The surface is an isometric projection of the value function for the textbook 'racetrack' problem. The contours of the value function for a racetrack corner emerge as the concurrent agents learn the value of states in the 2D coordinate system (the states actually comprise a higher number of kinematic dimensions, per x/y velocities). Blue represents higher value and red represents lower value.
 
