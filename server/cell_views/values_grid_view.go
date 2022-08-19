@@ -16,9 +16,9 @@ type ValuesGrid struct {
 }
 
 func NewValuesGrid(
+	done <-chan struct{},
 	id string,
 	cells <-chan [][]Cell,
-	done <-chan struct{},
 ) (vg *ValuesGrid) {
 	if strings.Contains(id, "-") {
 		fmt.Println("WARNING: names with hyphens intefere with html/template parsing of the `template` directive")

@@ -11,9 +11,9 @@ import (
 	"tabular/models"
 	"tabular/server/cell_views"
 	"tabular/server/fastview"
+	"tabular/server/root_view"
 
 	"github.com/gorilla/websocket"
-	channerics "github.com/niceyeti/channerics/channels"
 )
 
 // TODO: refactor the whole server. This is pretty awful but fine for prototyping the realtime svg updates.
@@ -59,9 +59,9 @@ Summary: SSEs are great and modest, suitable to something like ads. But websocke
 type Server struct {
 	addr string
 	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
-	lastUpdate [][][][]models.State
-	views      []fastview.ViewComponent
-	eleUpdates <-chan []fastview.EleUpdate
+	lastUpdate    [][]cell_views.Cell
+	rootView      fastview.ViewComponent
+	indexTemplate *template.Template
 }
 
 // NewServer initializes all of the views and returns a server.
@@ -69,119 +69,47 @@ func NewServer(
 	ctx context.Context,
 	addr string,
 	initialStates [][][][]models.State,
-	stateUpdates <-chan [][][][]models.State) *Server {
-	// Build all of the views on server construction. This is a tad weird, and has alternatives.
-	// For example views could be constructed on the fly per endpoint, broken out by view (separate pages).
-	// But this could also be done by building/managing the views in advance and querying them on the fly.
-	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
-	// and extends other options. Serving views is the server's only responsibility, so this fits.
-	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell](stateUpdates).
-		WithContext(ctx).
-		WithModel(cell_views.Convert).
-		WithView(func(
-			done <-chan struct{},
-			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
-			return cell_views.NewValuesGrid("valuesgrid", cellUpdates, done)
-		}).
-		WithView(func(
-			done <-chan struct{},
-			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
-			return cell_views.NewValueFunction("valuefunction", cellUpdates, done)
-		}).
-		Build()
-	if err != nil {
-		log.Fatal(err)
+	stateUpdates <-chan [][][][]models.State,
+) (*Server, error) {
+	var err error
+	var tname string
+	t := template.New("index")
+	rootView := root_view.NewRootView(ctx, initialStates, stateUpdates)
+	if tname, err = rootView.Parse(t); err != nil {
+		return nil, err
 	}
 
-	// TODO: this is a bandaid. Similar to the index-html template note, by abstracting
-	// the views I have left the server in a state of insufficient abstraction. The next
-	// step will be figuring out where some of this can live appropriately. For example,
-	// dependency-inversion suggests that the websocket should be passed into some view-component
-	// (a page representing a coherent collection of views), which then fans-in the ele-update
-	// channels and throttles its updates to the clients. The primary models here are all fastview,
-	// so perhaps this is clearly part of a controller for fastview. Testability drives
-	// decomposition.
-	updates := fanIn(ctx.Done(), views)
+	var indexTemplate *template.Template
+	if indexTemplate, err = t.Parse(`{{ template "` + tname + `" }}`); err != nil {
+		return nil, err
+	}
+
+	// TODO: this is incomplete/confused abstraction of the views. The last bit of coupling is that
+	// the cells must be passed into the template; the template seems to reside at a higher level
+	// (the server) which shouldn't know about Cells. Fine for now, but solving this would lead
+	// to cleaner/better design. Perhaps the entire index.html generation is a responsibility of
+	// the cell_views package. Basically I have arrived at a mixed level of abstraction, whereby
+	// views nearly-fully encapsulate information, but not quite, and should continue toward a
+	// fully view-agnostic server whose only responsibility is serving.
+	initialCells := cell_views.Convert(initialStates)
 
 	return &Server{
-		addr:       addr,
-		lastUpdate: initialStates,
-		views:      views,
-		eleUpdates: updates,
-	}
+		addr:          addr,
+		lastUpdate:    initialCells,
+		rootView:      rootView,
+		indexTemplate: indexTemplate,
+	}, nil
 }
 
-func (server *Server) Serve() {
+func (server *Server) Serve() (err error) {
 	http.HandleFunc("/", server.serveIndex)
 	http.HandleFunc("/ws", server.serveWebsocket)
 	//http.HandleFunc("/profile", pprof.Profile)
-	// TODO: parameterize port, addr per container requirements. The client bootstrap code must also receive
-	// the port number to connect to the web socket.
-	if err := http.ListenAndServe(server.addr, nil); err != nil {
-		fmt.Println(err)
+
+	if err = http.ListenAndServe(server.addr, nil); err != nil {
+		err = fmt.Errorf("serve: %w", err)
 	}
-	fmt.Println("Server started!")
-}
 
-// fanIn aggregates the views' ele-update channels into a single channel,
-// and throttle its output.
-// TODO: see note in caller. This is needs a different home
-func fanIn(
-	done <-chan struct{},
-	views []fastview.ViewComponent,
-) <-chan []fastview.EleUpdate {
-	inputs := make([]<-chan []fastview.EleUpdate, len(views))
-	for i, view := range views {
-		inputs[i] = view.Updates()
-	}
-	return batchify(
-		done,
-		channerics.Merge(done, inputs...),
-		time.Millisecond*20)
-}
-
-// batchify batches within the passed time frame before sending, over-writing previously
-// received values with the same ele-id. Uniquifying in this manner ensures that redundant
-// updates for the same ele-id are not sent.
-func batchify(
-	done <-chan struct{},
-	source <-chan []fastview.EleUpdate,
-	rate time.Duration,
-) <-chan []fastview.EleUpdate {
-	output := make(chan []fastview.EleUpdate)
-
-	go func() {
-		defer close(output)
-
-		data := map[string]fastview.EleUpdate{}
-		last := time.Now()
-		for updates := range channerics.OrDone(done, source) {
-			// Intentionally overwrites pre-exisiting values for an ele-id within this batch's time frame.
-			for _, update := range updates {
-				data[update.EleId] = update
-			}
-
-			if time.Since(last) > rate && len(updates) > 0 {
-				select {
-				case output <- slicedVals(data):
-					//fmt.Printf("Sent: %d\n", len(data))
-					data = map[string]fastview.EleUpdate{}
-					last = time.Now()
-				case <-done:
-					return
-				}
-			}
-		}
-	}()
-
-	return output
-}
-
-// returns the values of a map as a slice
-func slicedVals[T1 comparable, T2 any](mp map[T1]T2) (sliced []T2) {
-	for _, v := range mp {
-		sliced = append(sliced, v)
-	}
 	return
 }
 
@@ -219,13 +147,13 @@ func (server *Server) publishUpdates(ws *websocket.Conn) {
 		}()
 		return errs
 	}
-	last := time.Now()
-	resolution := time.Millisecond * 200
-	var done <-chan error
 
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max number of updates per second.
-	for updates := range server.eleUpdates {
+	last := time.Now()
+	resolution := time.Millisecond * 200
+	var done <-chan error
+	for updates := range server.rootView.Updates() {
 		//fmt.Println("WS server tick")
 		// Drop updates when receiving them too quickly.
 		if time.Since(last) < resolution {
@@ -278,109 +206,9 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-
-	// Build the func-map, passed recursively to child view components. Note this is a very
-	// kludgy pattern, as a view may specify a function call defined above it, or override/add
-	// other func definitions. Overall this is just stupid loss of control to fight with; the views
-	// should instead add funcs the same way library dependencies are added by calling them. This could
-	// be done a number of ways; every component defines all of the funcs it needs, or they get added
-	// progressively. The requirement is that components/devs must know when they create a conflict.
-	// I don't think this is a hard problem to solve, once one stops approaching it from the confines
-	// of satisfying the template package just to 'make things work', as the current solution does.
-	funcMap := template.FuncMap{
-		"add":  func(i, j int) int { return i + j },
-		"sub":  func(i, j int) int { return i - j },
-		"mult": func(i, j int) int { return i * j },
-		"div":  func(i, j int) int { return i / j },
-		"max": func(i, j int) int {
-			if i > j {
-				return i
-			}
-			return j
-		},
-	}
-
-	t := template.New("index").Funcs(funcMap)
-	viewTemplates := []string{}
-	for _, vc := range server.views {
-		if name, err := vc.Parse(t); err != nil {
-			fmt.Println("View rejected: ", err)
-			continue
-		} else {
-			viewTemplates = append(viewTemplates, name)
-		}
-	}
-
-	// The main template bootstraps the rest: sets up client websocket and updates, aggregates views.
-	indexTemplate := `<!DOCTYPE html>
-	<html>
-		<head>
-			<link rel="icon" href="data:,">
-			<!--This is the client bootstrap code by which the server pushes new data to the view via websocket.-->
-			<script>
-				const ws = new WebSocket("ws://localhost:8080/ws");
-				ws.onopen = function (event) {
-					console.log("Web socket opened")
-				};
-
-				// Listen for errors
-				ws.onerror = function (event) {
-					console.log('WebSocket error: ', event);
-				};
-
-				// The meat: when the server pushes view updates, find these eles and update them.
-				ws.onmessage = function (event) {
-					items = JSON.parse(event.data)
-					// FUTURE: scope the updates per view. Not really needed now, just grab them by id from doc level.
-					// Iterate the data updates
-					for (const update of items) {
-						const ele = document.getElementById(update.EleId)
-						for (const op of update.Ops) {
-							if (op.Key === "textContent") {
-								ele.textContent = op.Value;
-							} else {
-								ele.setAttribute(op.Key, op.Value)
-							}
-						}
-					}
-				}
-			</script>
-		</head>
-		<body>
-		`
-
-	for _, name := range viewTemplates {
-		// Specify the nested template and pass in its params
-		indexTemplate += `{{ template "` + name + `" . }}`
-	}
-
-	indexTemplate += `
-		</body>
-	</html>
-	`
-
-	//fmt.Println(indexTemplate)
-
-	var err error
-	if t, err = t.Parse(indexTemplate); err != nil {
-		_, _ = w.Write([]byte(err.Error()))
-		return
-	}
-
-	// RootView(lastUpdate?, done?)
-	// Parse(template) string, err
-	// Updates() <- the final ele-update chan
-	// - has: all the subviews, which it builds using the builder pattern.
-
-	// TODO: this is incomplete abstraction of the views. The last bit of coupling is that
-	// the cells must be passed into the template; the template seems to reside at a higher level
-	// (the server) which doesn't seem like it should know about Cells. Fine for now, but the
-	// solving this would lead to cleaner/better design. Perhaps the entire index.html generation
-	// is a responsibility of the cell_views package. Basically I have arrived at a mixed level of
-	// abstraction, whereby views nearly-fully encapsulate information, but not quite, and should
-	// continue toward a fully view-agnostic server whose only responsibility is serving.
-	cells := cell_views.Convert(server.lastUpdate)
-	if err = t.Execute(w, cells); err != nil {
+	// FUTURE: see note elsewhere. Execute requires the initial State or Cell data, but the server
+	// shouldn't know about either type, hence this should be moved down...
+	if err := server.indexTemplate.Execute(w, server.lastUpdate); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}

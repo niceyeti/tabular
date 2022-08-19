@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"runtime"
 
 	. "tabular/models"
@@ -49,25 +50,36 @@ func selectTrack() []string {
 	return FullTrack
 }
 
-func runApp() {
+func runApp() (err error) {
 	// TODO: I'm not super worried about setting up elegant teardown. It would
 	// be a good exercise. The contexts are not super clear either. The gist is
 	// that rootCtx could represent a shutdown signal, etc., but usage is not needful.
-	appCtx := context.TODO()
+	appCtx, appCancel := context.WithCancel(context.TODO())
+	defer appCancel()
+
 	racetrack := selectTrack()
 	states = Convert(racetrack)
+
+	// Start training
 	Train(
 		appCtx,
 		states,
 		*nworkers,
 		exportStates)
 
-	NewServer(
+	// Run server
+	var server *Server
+	if server, err = NewServer(
 		appCtx,
 		addr,
 		states,
 		stateUpdates,
-	).Serve()
+	); err != nil {
+		return
+	}
+
+	err = server.Serve()
+	return
 }
 
 // When called during training progress, this blocks and sends the current
@@ -95,5 +107,7 @@ func print_values_async(states [][][][]State, done <-chan struct{}) {
 
 // TODO: use mixedCaps throughout
 func main() {
-	runApp()
+	if err := runApp(); err != nil {
+		fmt.Println(err)
+	}
 }
