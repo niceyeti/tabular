@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"tabular/models"
@@ -59,9 +60,8 @@ Summary: SSEs are great and modest, suitable to something like ads. But websocke
 type Server struct {
 	addr string
 	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
-	lastUpdate    [][]cell_views.Cell
-	rootView      fastview.ViewComponent
-	indexTemplate *template.Template
+	lastUpdate [][]cell_views.Cell
+	rootView   *root_view.RootView
 }
 
 // NewServer initializes all of the views and returns a server.
@@ -72,15 +72,10 @@ func NewServer(
 	stateUpdates <-chan [][][][]models.State,
 ) (*Server, error) {
 	var err error
-	var tname string
+	//var tname string
 	t := template.New("index")
 	rootView := root_view.NewRootView(ctx, initialStates, stateUpdates)
-	if tname, err = rootView.Parse(t); err != nil {
-		return nil, err
-	}
-
-	var indexTemplate *template.Template
-	if indexTemplate, err = t.Parse(`{{ template "` + tname + `" }}`); err != nil {
+	if _, err = rootView.Parse(t); err != nil {
 		return nil, err
 	}
 
@@ -94,10 +89,9 @@ func NewServer(
 	initialCells := cell_views.Convert(initialStates)
 
 	return &Server{
-		addr:          addr,
-		lastUpdate:    initialCells,
-		rootView:      rootView,
-		indexTemplate: indexTemplate,
+		addr:       addr,
+		lastUpdate: initialCells,
+		rootView:   rootView,
 	}, nil
 }
 
@@ -204,11 +198,13 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	w.Header().Set("Content-Type", "text/html")
+
+	_ = server.rootView.Template().Execute(os.Stdout, server.lastUpdate)
+
 	// FUTURE: see note elsewhere. Execute requires the initial State or Cell data, but the server
 	// shouldn't know about either type, hence this should be moved down...
-	if err := server.indexTemplate.Execute(w, server.lastUpdate); err != nil {
+	if err := server.rootView.Template().Execute(w, server.lastUpdate); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}

@@ -18,6 +18,8 @@ import (
 type RootView struct {
 	views   []fastview.ViewComponent
 	updates <-chan []fastview.EleUpdate
+	// TODO: this is foobar
+	rootTemplate *template.Template
 }
 
 // NewRootView create the main page and the views it contains.
@@ -71,9 +73,13 @@ func (rt *RootView) Updates() <-chan []fastview.EleUpdate {
 	return rt.updates
 }
 
+func (rv *RootView) Template() *template.Template {
+	return rv.rootTemplate
+}
+
 // Parse builds the main page's template, with websocket bootstrap code, and returns its name.
 // It also sets up the func-map that many child components depend on.
-func (rt *RootView) Parse(
+func (rv *RootView) Parse(
 	t *template.Template,
 ) (name string, err error) {
 	// Build the func-map, passed recursively to child view components. Note this is a very
@@ -84,7 +90,7 @@ func (rt *RootView) Parse(
 	// progressively. The requirement is that components/devs must know when they create a conflict.
 	// I don't think this is a hard problem to solve, once one stops approaching it from the confines
 	// of satisfying the template package just to 'make things work', as the current solution does.
-	t = t.Funcs(
+	rt := t.Funcs(
 		template.FuncMap{
 			"add":  func(i, j int) int { return i + j },
 			"sub":  func(i, j int) int { return i - j },
@@ -99,8 +105,8 @@ func (rt *RootView) Parse(
 		})
 
 	viewTemplates := []string{}
-	for _, vc := range rt.views {
-		if tname, parseErr := vc.Parse(t); parseErr != nil {
+	for _, vc := range rv.views {
+		if tname, parseErr := vc.Parse(rt); parseErr != nil {
 			err = parseErr
 			return
 		} else {
@@ -159,7 +165,7 @@ func (rt *RootView) Parse(
 	</html>
 	{{ end }}
 	`
-	_, err = t.Parse(indexTemplate)
+	rv.rootTemplate, err = rt.Parse(indexTemplate)
 
 	return
 }
