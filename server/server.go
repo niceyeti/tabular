@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"tabular/models"
@@ -71,13 +71,7 @@ func NewServer(
 	initialStates [][][][]models.State,
 	stateUpdates <-chan [][][][]models.State,
 ) (*Server, error) {
-	var err error
-	//var tname string
-	t := template.New("index")
 	rootView := root_view.NewRootView(ctx, initialStates, stateUpdates)
-	if _, err = rootView.Parse(t); err != nil {
-		return nil, err
-	}
 
 	// TODO: this is incomplete/confused abstraction of the views. The last bit of coupling is that
 	// the cells must be passed into the template; the template seems to reside at a higher level
@@ -200,12 +194,28 @@ func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html")
 
-	_ = server.rootView.Template().Execute(os.Stdout, server.lastUpdate)
-
 	// FUTURE: see note elsewhere. Execute requires the initial State or Cell data, but the server
 	// shouldn't know about either type, hence this should be moved down...
-	if err := server.rootView.Template().Execute(w, server.lastUpdate); err != nil {
+	if err := renderTemplate(w, server.rootView, server.lastUpdate); err != nil {
 		_, _ = w.Write([]byte(err.Error()))
+	}
+}
+
+func renderTemplate(
+	w io.Writer,
+	vc fastview.ViewComponent,
+	data interface{},
+) (err error) {
+	t := template.New("index.html")
+	var tname string
+	if tname, err = vc.Parse(t); err != nil {
 		return
 	}
+
+	if _, err = t.Parse(`{{ template "` + tname + `" . }}`); err != nil {
+		return
+	}
+
+	err = t.Execute(w, data)
+	return
 }

@@ -18,8 +18,6 @@ import (
 type RootView struct {
 	views   []fastview.ViewComponent
 	updates <-chan []fastview.EleUpdate
-	// TODO: this is foobar
-	rootTemplate *template.Template
 }
 
 // NewRootView create the main page and the views it contains.
@@ -73,14 +71,10 @@ func (rt *RootView) Updates() <-chan []fastview.EleUpdate {
 	return rt.updates
 }
 
-func (rv *RootView) Template() *template.Template {
-	return rv.rootTemplate
-}
-
 // Parse builds the main page's template, with websocket bootstrap code, and returns its name.
 // It also sets up the func-map that many child components depend on.
 func (rv *RootView) Parse(
-	t *template.Template,
+	parent *template.Template,
 ) (name string, err error) {
 	// Build the func-map, passed recursively to child view components. Note this is a very
 	// kludgy pattern, as a view may specify a function call defined above it, or override/add
@@ -90,7 +84,7 @@ func (rv *RootView) Parse(
 	// progressively. The requirement is that components/devs must know when they create a conflict.
 	// I don't think this is a hard problem to solve, once one stops approaching it from the confines
 	// of satisfying the template package just to 'make things work', as the current solution does.
-	rt := t.Funcs(
+	rt := parent.Funcs(
 		template.FuncMap{
 			"add":  func(i, j int) int { return i + j },
 			"sub":  func(i, j int) int { return i - j },
@@ -165,8 +159,8 @@ func (rv *RootView) Parse(
 	</html>
 	{{ end }}
 	`
-	rv.rootTemplate, err = rt.Parse(indexTemplate)
 
+	_, err = rt.Parse(indexTemplate)
 	return
 }
 
@@ -211,7 +205,6 @@ func batchify(
 			if time.Since(last) > rate && len(updates) > 0 {
 				select {
 				case output <- slicedVals(data):
-					//fmt.Printf("Sent: %d\n", len(data))
 					data = map[string]fastview.EleUpdate{}
 					last = time.Now()
 				case <-done:
