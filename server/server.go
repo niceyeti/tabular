@@ -17,7 +17,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TODO: refactor the whole server. This is pretty awful but fine for prototyping the realtime svg updates.
 var upgrader = websocket.Upgrader{}
 
 const (
@@ -33,30 +32,22 @@ const (
 	closeGracePeriod = 10 * time.Second
 )
 
-/*
-Gist: I want to serve svg-based views of training information (value functions, policy info, etc).
-Svg is nice because it is declarative; real values map directly to attributes (like heatmaps).
-The issue is that while I could regenerate such views from an html template periodically, the client
-must then refresh the page to see the new view. Instead I want to push info from the server to the client,
-which requires web sockets. It also requires some logic and mapping to determine which values to update.
-I wish there was a sophisticated way to do this, but my approach is more or less procedural. Hopefully
-something more clever will become clear.
-
-The plan: generate an initial svg containing item id's by which to map RL values to displayed values.
-This will be a visual grid of the agent's V(s) values, where each cell has some searchable identifier.
-When new values occur, the deltas are sent to the client to update via a simple loop in js.
-
-Task 0: serve a page and demonstrate server side push updates to it.
-Task 1: bind this info to the agent value function with mathematical transformation (e.g. color mapping or policy vectors)
-Task 3: add additional info (golang runtime telemetry, etc), Q(s,a) values
-
-Lessons learned: the requirement of serving a basic realtime visualization is satisfied by server side events (SSE), and has promising
-self-contained security considerations (runs entirely over http, may not consume as many connections, etc.). However
-I'm going with full-duplex websockets for a more expressive language to meet future requirements. The differences
-are not that significant, since this app only requires a small portion of websocket functionality at half-duplex.
-Summary: SSEs are great and modest, suitable to something like ads. But websockets are more expressive but connection heavy.
-*/
-
+// Server serves a single page, to a single client, over a single websocket.
+// So intentionally very little generalization, this is just a prototype. This is
+// currently useful for solo RL development, just to develop and see views; but it
+// is completely incomplete as a real webserver, as the ele-update channel can be
+// listened to by only a single client, among similar quantification issues. You
+// could go hog-wild and fully abstract each endpoint (a page and websocket combo),
+// beginning with simply muxing the ele-update channel to service multiple clients.
+//
+// Lessons learned: the requirement of serving a basic realtime visualization
+// is satisfied by server side events (SSE), and has promising self-contained
+// security considerations (runs entirely over http, may not consume as many
+// connections, etc.). However I'm going with full-duplex websockets for a more
+// expressive language to meet future requirements. The differences are not
+// that significant, since this app only requires a small portion of websocket
+// functionality at half-duplex. Summary: SSEs are great and modest, suitable
+// to something like ads. But websockets are more expressive but connection heavy.
 type Server struct {
 	addr string
 	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
@@ -79,7 +70,8 @@ func NewServer(
 	// to cleaner/better design. Perhaps the entire index.html generation is a responsibility of
 	// the cell_views package. Basically I have arrived at a mixed level of abstraction, whereby
 	// views nearly-fully encapsulate information, but not quite, and should continue toward a
-	// fully view-agnostic server whose only responsibility is serving.
+	// fully view-agnostic server whose only responsibility is serving. This would be worthwhile
+	// golang MVC server research.
 	initialCells := cell_views.Convert(initialStates)
 
 	return &Server{
@@ -139,21 +131,20 @@ func (server *Server) publishUpdates(ws *websocket.Conn) {
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max number of updates per second.
 	last := time.Now()
-	resolution := time.Millisecond * 200
+	resolution := time.Millisecond * 100
 	var done <-chan error
 	for updates := range server.rootView.Updates() {
-		//fmt.Println("WS server tick")
-		// Drop updates when receiving them too quickly.
+		// Drop updates when receiving too quickly.
 		if time.Since(last) < resolution {
 			continue
 		}
 
-		// Await pending publication before publishing a new one.
+		// Await pending publication before publishing a subsequent one.
 		if done != nil {
 			select {
 			case err, isErr := <-done:
 				if isErr {
-					fmt.Println(err)
+					fmt.Printf("%T\n%v\n", err, err)
 					return
 				}
 			default:
@@ -163,7 +154,7 @@ func (server *Server) publishUpdates(ws *websocket.Conn) {
 
 		last = time.Now()
 		if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-			fmt.Println(err)
+			fmt.Printf("%T\n%v\n", err, err)
 			return
 		}
 
@@ -180,9 +171,7 @@ func (server *Server) closeWebsocket(ws *websocket.Conn) {
 	ws.Close()
 }
 
-// TODO: cleanup template and its ownership
-// FUTURE: it would be a fun problem to solve to devise a robust way to serve multiple
-// ui subcomponents (value function, policy visual, etc) and assemble them as one.
+// Serve the index.html main page.
 func (server *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.Error(w, "Not found", http.StatusNotFound)
