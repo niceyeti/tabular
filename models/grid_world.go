@@ -23,9 +23,11 @@ type Action struct {
 	Dvx, Dvy int
 }
 
-// Step is a single SARSA time step of an agent: do action a in state s, observe reward r and successor s'.
+// Step is a single SARSA time step of an agent: do action a in
+// state s, observe reward r and successor s'.
 type Step struct {
-	// NOTE: per possible race conditions, give due consideration to advantages in these being pointers or copies.
+	// NOTE: per possible race conditions, give due consideration
+	// to advantages in these being pointers or copies.
 	State     *State
 	Successor *State
 	Action    *Action

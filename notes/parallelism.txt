@@ -1,22 +1,22 @@
-TLDR: what are concurrency patterns for coordinating n goroutine updates to a large matrix of m entries, i.e. where m >> n?
-The general problem is whenever number of critical resources (matrix entries) significantly exceeds
-the number of workers (e.g. n = NumCPU). Thus contention is
+What concurrency patterns exist to coordinate n goroutine updates to a large matrix of m entries? i.e., m >> n.
+The general problem is when the number of critical resources (matrix entries) significantly exceeds
+the number of workers (e.g. NumCPU). Thus contention is
 sparse, but locking around every contended item is wasteful or infeasible. No ordering of
-access to matrix entries is assumed; workers can access entries randomly.
-The matrix size is fixed at runtime and the entries are structs, but contention is over float64 struct entries.
+access to matrix entries is assumed; workers access entries randomly.
+The matrix size is fixed at runtime and the entries are structs.
 
-One solution uses atomic ops: cast *float64 to *uint in order to leverage sync/atomic operations for all
-reads/writes. This works fine for my case, and could be encapsulated in an AtomicFloat64 type.
+For background, this is for parallelizing Monte Carlo and RL methods in an app for personal golang review.
+Monte Carlo methods are specifically useful in huge state spaces, for which m >> n,
+thus parallelizing over n workers is beneficial.
+My bandaid solution uses atomic ops: cast *float64 to *uint in order to leverage sync/atomic operations for all
+reads/writes. This works okay, for now.
 But I'm curious about solving the more general case of a large, fixed data structure (for which the sync/atomic
-approach is not possible). Getting into the weeds, the critical values are really the n numbers (matrix position) of each
+approach is not possible).
+
+Getting into the weeds, the critical values are really the n numbers (matrix position) of each
 worker; thus the problem reduces to ensuring the uniqueness of n integers. Log(m) locks
 is possible if one hashed the matrix indices to a smaller set of locks. Is there instead a 
 CSP-style pattern for communicating instead of locking?
-
-For background, this is for parallelizing Monte Carlo and RL methods in an app for personal golang review.
-Monte Carlo methods are specifically useful/applicable in huge state spaces for which m >> n,
-thus parallelizing over n workers is highly beneficial.
-
 Some spitball solutions:
 1) Implement AtomicFloat64: this likely provides the most general solution for concurrent numerical ops
 2) Hash item indices to a smaller set of locks
@@ -26,9 +26,111 @@ Domain-specific solutions for RL:
 5) Workers TryWriteLock() around a bit-set of current worker positions; if a state transition would collide with another worker,\
    pick a different state at random until TryWriteLock() succeeds.
    This could be done most robustly using a sync.Map of current agent locations.
+Likely best solutions to generic problem of n-workers locking m items, where n << m:
+6) AtomicBitset: Implement an atomic bit-set, declare one of size i*j,
+ and then have agents call Take(i,j) to set the bit at that location. It either:
+ - succeeds, indicating the agent has taken (i,j) (it must also unconditionally release its old (i',j')!)
+ - fails due to CompareAndSwap returning false
+ - fails because the bit is already set, indicating another worker occupies (i,j)
+ At any rate, the agent can then do something else: try another location, wait, etc.
+    Pro/con:
+    + Solves the problem using a compressed representation
+    - Still O(m), though in a compressed space.
+    - Non-locking and non-CSP. How to know memory-model requirements are met? Such as cpu's flushing their memory to (i,j) entries, and similar consistency issues.
 
 
+A motivating thought experiment: a tree of channels? This is throwaway, the intent
+is to divulge the problem's components. Perhaps there is an underlying data structure
+for this problem.
+    P-queue of semaphores: the root node is a channel (semaphore) of size N; then bifurcate
+    downward to n/2 nodes, n/4 nodes... until 0. The tree size is then ~N*Lg(N). Workers
+    could query this tree for properties of interest, for example 'would-lock' queries would
+    allow them to query another potential position when a state space became crowded by
+    adjacent workers. This could, on average, be used to encourage workers to separate from
+    eachother in the state space, leveraging the bifurcation properties of the tree (e.g.
+    "only allow n/2 workers per left/right side of state space").
+    - seems fraught, deadlock prone
+    - the tree structure only applies to 2D state spaces, not graphical ones for instance
+    - still O(m), and may more or less be an approximation of a sync.Map whose keys are
+      matrix indices
+    * see: http://alumni.cs.ucr.edu/~ysong/cs160/lab9/lock-chaining.html
 
+Problem statement: query and add set items to a disjoint set of numbers of size n.
+    Data structures:
+    - binary trees: unclear how these help
+    - hashmap: perfectly solves problem, but uses coarse locking
+    - disjoint-set: these are for partitioning populations of items, no singletons
+    - number theory: for small n (e.g., 8), can't this work? use bit ops to preserve the uniqueness of only 8 numbers.
+      For example, XOR can determine uniqueness: 1^2^3^2^1 = 3. But it does not work if a number occurs thrice.
+    - bitsets?
+
+Number theory spitballing:
+    Alternating compare-and-swap and i+j concat:
+        For small n, leverage CompareAndSwap: if n <= 8, and i/j are modest, compare-and-swap concat(i,j)
+        with portions of eight portions of a machine word; if any match, then those indices are in use.
+        For a word size of 64 bits, i and j indices allows for 64/16 = 4 bits per i and j. Thus matrix
+        size limit is 16 x 16.
+    XOR attempt:
+        XOR can find dupes (but only of size 2) in number sequences: 1^2^1 = 2.
+            Query: does set {1,3,5} contain 5?
+                1 ^ 3 ^ 5 ^ 5 = 1 ^ 3
+    Conclusion: the sequential construction could be done, but is not a good idea. This construction uses the
+    property of XOR to determine if (i,j) is occupied for worker n_i. A big drawback is that there is no guarantee
+    of a worker disassociating itself with a position after using it, as would be the case with mutexes (defer mu.Unlock()).
+    An AtomicBitset satisfies the same logical requirements, with fewer bitwise hijinks.
+
+Required properties:
+- a depth of O(n*log(n)) for data of size O(m)
+- every path to a leaf uniquely encode something in the space of O(m), e.g. matrix indices
+
+N-ary Tree spitballing:
+    Take(i,j):
+        // Find node_i_j from parity of i and j, just like a tradition binary tree
+        // If entry (i,j) exists, then it is in use
+            - retry for another (i',j')
+        // Else: create node (i,j) and release previous (i",j")
+        if i % 2 == 0:
+            return Take(i/2, j)
+        return Take(i, j/2)
+
+    N-ary tree where n is numworkers. Leverage semaphores to determine the number of locks held
+    below some subtree, representing a region of indices.
+
+    (i1,j1) (i2,j2) (i3, j3)
+    Query: is (i_k, j_l) taken?
+
+        Bifurcate the number of indices (could also be b-tree, e.g. mod 3, mod 4, etc.):
+
+                            root
+                      ________|________
+                     /                 \ 
+                    / i even            \ i odd
+           j even  /\ j odd      j even /\ j odd
+
+        And place a locked hashmap at each node, whose keys are concat(i,j).
+        By maintaining separate hashmaps, the likelihood of collision decreases.
+        Topology still means up to n entries must be stored per node.
+
+Brutest force: maintain an array of size i*j. Index into it using concat(i,j)
+and check if entry is 1 (in-use). This is the same as storing such fields in
+each matrix entry, mem complexity is O(i*j)==O(m). But can this be reduced to O(i+j)?
+An array of size i, whose entries are j's.
+    Query: InUse(i,j,arr) {
+        arr[i] == j
+    }
+    Note this lock per-row (where i is a row number). This could be improved by ensuring
+    that the entries represent sets of j's instead of a single j. Using bit ops, on a 64-bit
+    architecture, could each entry represent up to n (numworkers) entries? For n=8, 64/8 = 8,
+    for up to 256 bits. Thus a 256x256 matrix could be represented.
+    But can we efficiently query and store these sub-values in entries using CompareAndSwap?
+    I'm assuming so, but am uncertain; specifically: does arr[i] contain j's bit pattern
+    in its component bits?
+    * If all (i,j) are unique, then arr[i] components will never XOR to zero (except when all zero).
+        bi ^ b0 ^ b1 ^ b2 ^ b3 ^ b4... != 0
+
+        Using CompareAndSwap:
+        Take: set arr[i] to arr[i] ^ j, only if arr[i] ^ j != 0.
+        Give: set arr[i] to arr[i] ^ j, only if arr[i] ^ j == 0.
 
 
 
