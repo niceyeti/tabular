@@ -16,7 +16,6 @@ import (
 	"math/rand"
 	"time"
 
-	"tabular/atomic_float"
 	. "tabular/models"
 
 	channerics "github.com/niceyeti/channerics/channels"
@@ -201,7 +200,7 @@ func print_substates(states [][][][]State, x, y int) {
 	for vx := 0; vx < len(states[x][y]); vx++ {
 		for vy := 0; vy < len(states[x][y][vx]); vy++ {
 			s := states[x][y][vx][vy]
-			val := atomic_float.AtomicRead(&s.Value)
+			val := s.Value.AtomicRead()
 			fmt.Printf(" (%d,%d) %.2f\n", s.VX, s.VY, val)
 		}
 	}
@@ -214,7 +213,7 @@ func print_substates(states [][][][]State, x, y int) {
 // that the agent's max value search must account for the environment, else its policy might converge
 // to something invalid due to invalid values, by evaluating bad states as good.
 func get_max_successor(states [][][][]State, cur_state *State) (target *State, action *Action) {
-	max_val := -math.MaxFloat64
+	maxVal := -math.MaxFloat64
 	for dvx := -1; dvx < 2; dvx++ {
 		for dvy := -1; dvy < 2; dvy++ {
 			// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
@@ -225,9 +224,9 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 				continue
 			}
 
-			val := atomic_float.AtomicRead(&successor.Value)
-			if val > max_val {
-				max_val = val
+			val := successor.Value.AtomicRead()
+			if val > maxVal {
+				maxVal = val
 				target = successor
 				action = candidate_action
 			}
@@ -257,7 +256,7 @@ func Train(
 }
 
 func initStateVals(states [][][][]State, val float64) {
-	Visit(states, func(s *State) { s.Value = val })
+	Visit(states, func(s *State) { s.Value.AtomicSet(val) })
 }
 
 /*
@@ -363,18 +362,18 @@ func alphaMonteCarloVanillaTrain(
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
 			last_step := (*episode)[len(*episode)-1]
-			atomic_float.AtomicSet(&last_step.Successor.Value, last_step.Reward)
+			last_step.Successor.Value.AtomicSet(last_step.Reward)
 			// Propagate rewards backward from terminal state per episode
 			reward := 0.0
 			for _, t := range Rev(len(*episode)) {
 				// NOTE: not tracking states' is-visited status, so for now this is an every-visit MC implementation.
 				step := (*episode)[t]
 				reward += step.Reward
-				val := atomic_float.AtomicRead(&step.State.Value)
+				val := step.State.Value.AtomicRead()
 				delta := alpha * (reward - val)
 				// Note: intentionally discard rejected deltas. There won't be any, since add ops are serialized
 				// as there is a single estimator.
-				_, _ = atomic_float.AtomicAdd(&step.State.Value, delta)
+				_, _ = step.State.Value.AtomicAdd(delta)
 			}
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)

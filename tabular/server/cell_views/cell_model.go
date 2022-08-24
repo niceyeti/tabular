@@ -3,7 +3,6 @@ package cell_views
 
 import (
 	"math"
-	"tabular/atomic_float"
 	"tabular/models"
 )
 
@@ -43,7 +42,7 @@ func Convert(states [][][][]models.State) (cells [][]Cell) {
 		cells[x][y] = Cell{
 			X:                   x,
 			Y:                   max_y - y - 1,
-			Max:                 atomic_float.AtomicRead(&maxState.Value),
+			Max:                 maxState.Value.AtomicRead(),
 			PolicyArrowRotation: getDegrees(maxState),
 			PolicyArrowScale:    getScale(maxState),
 			Fill:                getFill(cellType),

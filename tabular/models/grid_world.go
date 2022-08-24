@@ -14,7 +14,7 @@ import (
 type State struct {
 	X, Y, VX, VY int
 	CellType     rune
-	Value        float64
+	Value        *atomic_float.AtomicFloat64
 }
 
 // Action consists of a velocity increment/decrement and horizontal or vertical direction.
@@ -137,7 +137,7 @@ func Convert(track []string) (states [][][][]State) {
 						VX:       vx,
 						VY:       vy,
 						CellType: cell_type,
-						Value:    0,
+						Value:    atomic_float.NewAtomicFloat64(0.0),
 					}
 					states[x][y][vx] = append(states[x][y][vx], state)
 				}
@@ -154,10 +154,6 @@ func isLive(state *State) bool {
 	return state.CellType != WALL
 }
 
-func isTermina(state *State) bool {
-	return state.CellType == WALL || state.CellType == FINISH
-}
-
 // Show the current policy, in two dimensions. Since the state space includes
 // position and velocity (four dimensions), it must be projected down into two-dimensions, which makes
 // sense from the perspective of driving/control. The encoding used displays a directional arrow at
@@ -169,9 +165,9 @@ func ShowPolicy(states [][][][]State) {
 		fmt.Print(" ")
 		for x := range states {
 			if isLive(&states[x][y][0][0]) {
-				max_state := MaxVelState(states[x][y])
-				dir := putMaxDir(max_state)
-				fmt.Printf("%c %d,%d  ", dir, max_state.VX, max_state.VY)
+				maxState := MaxVelState(states[x][y])
+				dir := putMaxDir(maxState)
+				fmt.Printf("%c %d,%d  ", dir, maxState.VX, maxState.VY)
 			} else {
 				fmt.Printf("-      ")
 			}
@@ -210,7 +206,7 @@ func ShowMaxValues(states [][][][]State) {
 		for x := range states {
 			velstates := states[x][y]
 			state := MaxVelState(velstates)
-			val := atomic_float.AtomicRead(&state.Value)
+			val := state.Value.AtomicRead()
 			fmt.Printf("%.2f ", val)
 			//fmt.Printf("%.2f%c ", state.value, putMaxDir(state))
 			total += val
@@ -233,8 +229,7 @@ func ShowAvgValues(states [][][][]State) {
 			for i := 0; i < len(velstates); i++ {
 				// From 1, since states for which both velocity components are zero or negative are excluded by problem def.
 				for j := 1; j < len(velstates[i]); j++ {
-					val := atomic_float.AtomicRead(&velstates[i][j].Value)
-					avg += val
+					avg += velstates[i][j].Value.AtomicRead()
 					n++
 				}
 			}
@@ -279,12 +274,12 @@ func putMaxDir(state *State) rune {
 }
 
 // Returns the max-valued velocity state from the subset of velocity states, a clumsy operation purely for viewing.
-func MaxVelState(vel_states [][]State) (max_state *State) {
+func MaxVelState(vel_states [][]State) (maxState *State) {
 	// Get the max value from the state subset of velocities
-	max_state = &State{
-		Value: -math.MaxFloat64,
+	maxState = &State{
+		Value: atomic_float.NewAtomicFloat64(-math.MaxFloat64),
 	}
-	max_val := max_state.Value
+	maxVal := maxState.Value.AtomicRead()
 
 	for vx := range vel_states {
 		for vy := range vel_states[vx] {
@@ -293,10 +288,10 @@ func MaxVelState(vel_states [][]State) (max_state *State) {
 				continue
 			}
 
-			val := atomic_float.AtomicRead(&vel_states[vx][vy].Value)
-			if val > max_val {
-				max_state = &vel_states[vx][vy]
-				max_val = val
+			val := vel_states[vx][vy].Value.AtomicRead()
+			if val > maxVal {
+				maxState = &vel_states[vx][vy]
+				maxVal = val
 			}
 		}
 	}

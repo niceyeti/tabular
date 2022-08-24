@@ -34,11 +34,16 @@ const (
 
 // Server serves a single page, to a single client, over a single websocket.
 // So intentionally very little generalization, this is just a prototype. This is
-// currently useful for solo RL development, just to develop and see views; but it
+// currently useful for solo RL development, just to develop and see html views; but it
 // is completely incomplete as a real webserver, as the ele-update channel can be
 // listened to by only a single client, among similar quantification issues. You
 // could go hog-wild and fully abstract each endpoint (a page and websocket combo),
 // beginning with simply muxing the ele-update channel to service multiple clients.
+// The server currently builds and represents a single view; no layering at all.
+// For experience it would be desirable to rearchitect the server into appropriate
+// layers via Uncle Bob's architecture  manifesto. Currently it is a mishmash of
+// network, websockets, views, etc., intentionally monolithic because I just wanted
+// some views.
 //
 // Lessons learned: the requirement of serving a basic realtime visualization
 // is satisfied by server side events (SSE), and has promising self-contained
@@ -71,7 +76,8 @@ func NewServer(
 	// the cell_views package. Basically I have arrived at a mixed level of abstraction, whereby
 	// views nearly-fully encapsulate information, but not quite, and should continue toward a
 	// fully view-agnostic server whose only responsibility is serving. This would be worthwhile
-	// golang MVC server research.
+	// golang MVC server research. Best to read Uncle Bob's architecture manifesto and redo the
+	// whole app.
 	initialCells := cell_views.Convert(initialStates)
 
 	return &Server{

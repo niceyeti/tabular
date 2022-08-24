@@ -11,7 +11,7 @@ import (
 func TestAtomicAdd(t *testing.T) {
 	Convey("When atomicAdd is called", t, func() {
 		Convey("When multiple writers add to the float value concurrently", func() {
-			f64 := float64(0.0)
+			f64 := NewAtomicFloat64(0.0)
 			num_ops := 3000
 			num_writers := 200
 
@@ -21,7 +21,7 @@ func TestAtomicAdd(t *testing.T) {
 			adder := func() {
 				<-start
 				for i := 0; i < num_ops; i++ {
-					for succeeded := false; !succeeded; _, succeeded = AtomicAdd(&f64, 1.0) {
+					for succeeded := false; !succeeded; _, succeeded = f64.AtomicAdd(1.0) {
 					}
 				}
 				wg.Done()
@@ -35,11 +35,11 @@ func TestAtomicAdd(t *testing.T) {
 			time.Sleep(time.Millisecond * 10)
 			close(start)
 			wg.Wait()
-			So(f64, ShouldEqual, float64(num_ops*num_writers))
+			So(f64.AtomicRead(), ShouldEqual, float64(num_ops*num_writers))
 		})
 
 		Convey("When multiple writers increment and decrement the float value concurrently", func() {
-			f64 := float64(0.0)
+			f64 := NewAtomicFloat64(0.0)
 			num_ops := 3000
 			num_writers := 200
 
@@ -49,7 +49,7 @@ func TestAtomicAdd(t *testing.T) {
 			incrementer := func() {
 				<-start
 				for i := 0; i < num_ops; i++ {
-					for succeeded := false; !succeeded; _, succeeded = AtomicAdd(&f64, 1.0) {
+					for succeeded := false; !succeeded; _, succeeded = f64.AtomicAdd(1.0) {
 					}
 				}
 				wg.Done()
@@ -58,7 +58,7 @@ func TestAtomicAdd(t *testing.T) {
 			decrementer := func() {
 				<-start
 				for i := 0; i < num_ops; i++ {
-					for succeeded := false; !succeeded; _, succeeded = AtomicAdd(&f64, -1.0) {
+					for succeeded := false; !succeeded; _, succeeded = f64.AtomicAdd(-1.0) {
 					}
 				}
 				wg.Done()
@@ -73,7 +73,7 @@ func TestAtomicAdd(t *testing.T) {
 			time.Sleep(time.Millisecond * 10)
 			close(start)
 			wg.Wait()
-			So(f64, ShouldEqual, float64(0.0))
+			So(f64.AtomicRead(), ShouldEqual, float64(0.0))
 		})
 	})
 }

@@ -33,7 +33,7 @@ func (vb *ViewBuilder[DataModel, ViewModel]) WithModel(
 	return vb
 }
 
-// ViewBuilderFunc builds a view from an input view-model channel and a 'done' channel for cleanup.
+// ViewBuilderFunc builds a view from an input view-model and 'done' chans.
 type ViewBuilderFunc[ViewModel any] func(<-chan struct{}, <-chan ViewModel) ViewComponent
 
 // WithView adds a view to the list of views to build.
@@ -62,7 +62,10 @@ var ErrNoModel error = errors.New("no model specified: WithModel must be called"
 
 // Build executes the stored builders, connecting the channels together and returning
 // a single aggregated ele-update channel and all the views.
-func (vb *ViewBuilder[DataModel, ViewModel]) Build() (views []ViewComponent, err error) {
+func (vb *ViewBuilder[DataModel, ViewModel]) Build() (
+	views []ViewComponent,
+	err error,
+) {
 	if len(vb.builderFns) == 0 {
 		return nil, ErrNoViews
 	}

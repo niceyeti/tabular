@@ -108,6 +108,12 @@ func (rv *RootView) Parse(
 		}
 	}
 
+	// Specify the nested templates
+	var bodySpec string
+	for _, tname := range viewTemplates {
+		bodySpec += (`{{ template "` + tname + `" . }}`)
+	}
+
 	// The main template bootstraps the rest: sets up client websocket and updates, aggregates views.
 	name = "mainpage"
 	indexTemplate := `
@@ -147,16 +153,8 @@ func (rv *RootView) Parse(
 			</script>
 		</head>
 		<body>
-		`
-
-	// Specify the nested templates
-	for _, tname := range viewTemplates {
-		indexTemplate += (`{{ template "` + tname + `" . }}`)
-	}
-
-	indexTemplate += `
-		</body>
-	</html>
+		` + bodySpec + `
+		</body></html>
 	{{ end }}
 	`
 
@@ -182,8 +180,8 @@ func fanIn(
 }
 
 // batchify batches within the passed time frame before sending, over-writing previously
-// received values with the same ele-id. Uniquifying in this manner ensures that redundant
-// updates for the same ele-id are not sent.
+// received values for the same ele-id. This ensures that redundant updates for the
+// same ele-id are not sent, and only the latest values are sent.
 func batchify(
 	done <-chan struct{},
 	source <-chan []fastview.EleUpdate,
