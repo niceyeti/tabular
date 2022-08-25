@@ -13,8 +13,8 @@ type TestView struct {
 }
 
 func NewTestView(
-	input <-chan string,
 	done <-chan struct{},
+	input <-chan string,
 ) ViewComponent {
 	updates := make(chan []EleUpdate)
 	go func() {
@@ -38,10 +38,10 @@ func NewTestView(
 	}
 }
 
-func (tv *TestView) Template(
-	funcs template.FuncMap,
-) (t *template.Template, err error) {
-	return nil, nil
+func (tv *TestView) Parse(
+	t *template.Template,
+) (name string, err error) {
+	return
 }
 
 func (tv *TestView) Updates() <-chan []EleUpdate {
@@ -52,9 +52,9 @@ func TestFastView(t *testing.T) {
 	Convey("Happy path builder", t, func() {
 		Convey("When builder succeeds", func() {
 			input := make(chan int)
-			views, err := NewViewBuilder[int, string](input).
-				WithModel(func(x int) string { return fmt.Sprintf("%d", x) }).
-				WithView(NewTestView).
+			views, err := NewViewBuilder[int, string]().
+				WithModel(input, func(x int) string { return fmt.Sprintf("%d", x) }).
+				WithView(func(done <-chan struct{}, input <-chan string) ViewComponent { return NewTestView(done, input) }).
 				Build()
 			So(err, ShouldBeNil)
 			So(len(views), ShouldEqual, 1)

@@ -32,6 +32,10 @@ const (
 	closeGracePeriod = 10 * time.Second
 )
 
+// Main TODOs:
+// 1) websocket pingpong
+// 2) Uncle Bob app rearchitecting
+
 // Server serves a single page, to a single client, over a single websocket.
 // So intentionally very little generalization, this is just a prototype. This is
 // currently useful for solo RL development, just to develop and see html views; but it
