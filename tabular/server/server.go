@@ -15,6 +15,7 @@ import (
 	"tabular/server/root_view"
 
 	"github.com/gorilla/websocket"
+	channerics "github.com/niceyeti/channerics/channels"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -108,6 +109,7 @@ func (server *Server) Serve() (err error) {
 // This currently assumes this handler is hit only once, one client.
 // TODO: handle closure and failure paths for websocket.
 func (server *Server) serveWebsocket(w http.ResponseWriter, r *http.Request) {
+	// DDOS risk here if server does not track and limit http->websocket upgrade attempts per client
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -116,59 +118,104 @@ func (server *Server) serveWebsocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer server.closeWebsocket(ws)
-	server.publishUpdates(ws)
+	server.publishEleUpdates(r.Context(), ws)
 }
 
 // TODO: this code is now fubar until I refactor the server and fastviews. This code
 // does not define the relationships between clients and websockets, nor closure.
-// publishUpdates transforms state updates from the training method into
+// publishEleUpdates transforms state updates from the training method into
 // view updates sent to the client. "How can I test this" guides the decomposition of
 // components.
+// TODO: the websocket code exemplifies the externalmost layer in Uncle Bobs architecture: net,
+// db, drivers, etc. This should be broken out as such.
 // Note that taking too long here could block senders on the
 // state chan; this will surely change as code develops, be mindful of upstream effects.
-func (server *Server) publishUpdates(ws *websocket.Conn) {
+func (server *Server) publishEleUpdates(
+	ctx context.Context,
+	ws *websocket.Conn,
+) {
 	publish := func(updates []fastview.EleUpdate) <-chan error {
 		errs := make(chan error)
 		go func() {
 			defer close(errs)
 			if err := ws.WriteJSON(updates); err != nil {
-				errs <- err
+				if websocket.IsUnexpectedCloseError(
+					err,
+					websocket.CloseGoingAway,
+					websocket.CloseAbnormalClosure) {
+					errs <- err
+				}
 			}
 		}()
 		return errs
 	}
 
+	// Monitor client health/disconnects
+	ws.SetPongHandler(func(appData string) error {
+		fmt.Println("Got me a pong!")
+		return nil
+	})
+	ws.SetPingHandler(func(appData string) error {
+		fmt.Println("Well jee, a ping!")
+		return nil
+	})
+
+	/*
+		go func() {
+			for range time.Tick(time.Second) {
+				err := ws.WriteMessage(0x9, []byte("PING"))
+				if err != nil {
+					fmt.Println(fmt.Errorf("pinger: %w", err))
+				}
+			}
+		}()
+	*/
+
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max number of updates per second.
 	last := time.Now()
-	resolution := time.Millisecond * 100
-	var done <-chan error
-	for updates := range server.rootView.Updates() {
-		// Drop updates when receiving too quickly.
-		if time.Since(last) < resolution {
-			continue
-		}
+	resolution := time.Millisecond
+	var errs <-chan error
+	sendCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-		// Await pending publication before publishing a subsequent one.
-		if done != nil {
-			select {
-			case err, isErr := <-done:
-				if isErr {
-					fmt.Printf("%T\n%v\n", err, err)
-					return
-				}
-			default:
+	for {
+		select {
+		case <-sendCtx.Done():
+			return
+		case <-channerics.NewTicker(sendCtx.Done(), time.Millisecond*10):
+			_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
+			fmt.Println("Sending ping")
+			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		case updates := <-server.rootView.Updates():
+			// Drop updates when receiving too quickly.
+			if time.Since(last) < resolution {
 				continue
 			}
-		}
 
-		last = time.Now()
-		if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-			fmt.Printf("%T\n%v\n", err, err)
-			return
-		}
+			// Await pending publication before publishing a subsequent one.
+			if errs != nil {
+				select {
+				case err, isErr := <-errs:
+					if isErr {
+						fmt.Printf("%T\n%v\n", err, err)
+						return
+					}
+				default:
+					continue
+				}
+			}
 
-		done = publish(updates)
+			last = time.Now()
+			if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				fmt.Printf("%T\n%v\n", err, err)
+				return
+			}
+
+			errs = publish(updates)
+		}
 	}
 }
 

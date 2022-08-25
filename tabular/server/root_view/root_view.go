@@ -122,7 +122,6 @@ func (rv *RootView) Parse(
 	<html>
 		<head>
 			<link rel="icon" href="data:,">
-			<!--This is the client bootstrap code by which the server pushes new data to the view via websocket.-->
 			<script>
 				const ws = new WebSocket("ws://localhost:8080/ws");
 				ws.onopen = function (event) {
