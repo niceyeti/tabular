@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"tabular/models"
+	"tabular/grid_world"
 	"tabular/server/cell_views"
 	"tabular/server/fastview"
 	"tabular/server/root_view"
@@ -68,8 +68,8 @@ type Server struct {
 func NewServer(
 	ctx context.Context,
 	addr string,
-	initialStates [][][][]models.State,
-	stateUpdates <-chan [][][][]models.State,
+	initialStates [][][][]grid_world.State,
+	stateUpdates <-chan [][][][]grid_world.State,
 ) (*Server, error) {
 	rootView := root_view.NewRootView(ctx, initialStates, stateUpdates)
 

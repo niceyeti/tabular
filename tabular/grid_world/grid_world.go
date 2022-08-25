@@ -1,4 +1,4 @@
-package models
+package grid_world
 
 import (
 	"fmt"

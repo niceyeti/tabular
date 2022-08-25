@@ -18,14 +18,14 @@ import (
 	"fmt"
 	"runtime"
 
-	"tabular/models"
+	"tabular/grid_world"
 	"tabular/reinforcement"
 	"tabular/server"
 )
 
 var (
-	stateUpdates chan [][][][]models.State = make(chan [][][][]models.State)
-	states       [][][][]models.State
+	stateUpdates chan [][][][]grid_world.State = make(chan [][][][]grid_world.State)
+	states       [][][][]grid_world.State
 	dbg          *bool
 	nworkers     *int
 	host         *string
@@ -45,9 +45,9 @@ func init() {
 func selectTrack() []string {
 	// choose/input a track
 	if *dbg {
-		return models.DebugTrack
+		return grid_world.DebugTrack
 	}
-	return models.FullTrack
+	return grid_world.FullTrack
 }
 
 func runApp() (err error) {
@@ -58,7 +58,7 @@ func runApp() (err error) {
 	defer appCancel()
 
 	racetrack := selectTrack()
-	states = models.Convert(racetrack)
+	states = grid_world.Convert(racetrack)
 
 	// Start training
 	reinforcement.Train(

@@ -3,7 +3,7 @@ package cell_views
 
 import (
 	"math"
-	"tabular/models"
+	"tabular/grid_world"
 )
 
 // Cell is for converting the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
@@ -27,17 +27,17 @@ type Cell struct {
 // the coordinate system.
 // TODO: where can this live? Is reorg needed? Notice how this references model.State and helpers.
 // I suppose this is fine, but re-evaluate.
-func Convert(states [][][][]models.State) (cells [][]Cell) {
+func Convert(states [][][][]grid_world.State) (cells [][]Cell) {
 	cells = make([][]Cell, len(states))
 	max_y := len(states[0])
 	for x := range states {
 		cells[x] = make([]Cell, max_y)
 	}
 
-	models.VisitXYStates(states, func(velstates [][]models.State) {
+	grid_world.VisitXYStates(states, func(velstates [][]grid_world.State) {
 		x, y := velstates[0][0].X, velstates[0][0].Y
 		cellType := velstates[0][0].CellType
-		maxState := models.MaxVelState(velstates)
+		maxState := grid_world.MaxVelState(velstates)
 		// flip the y indices for displaying in svg coordinate system
 		cells[x][y] = Cell{
 			X:                   x,
@@ -51,13 +51,13 @@ func Convert(states [][][][]models.State) (cells [][]Cell) {
 	return
 }
 
-func getScale(state *models.State) int {
+func getScale(state *grid_world.State) int {
 	return int(math.Hypot(float64(state.VX), float64(state.VY)))
 }
 
 // getDegrees converts the vx and vy velocity components in cartesian space into the degrees passed
 // to svg's rotate() transform function for an upward arrow rune. Degrees are wrt vertical.
-func getDegrees(state *models.State) int {
+func getDegrees(state *grid_world.State) int {
 	if state.VX == 0 && state.VY == 0 {
 		return 0
 	}
@@ -69,13 +69,13 @@ func getDegrees(state *models.State) int {
 
 func getFill(cellType rune) (fill string) {
 	switch cellType {
-	case models.WALL:
+	case grid_world.WALL:
 		fill = "lightgreen"
-	case models.TRACK:
+	case grid_world.TRACK:
 		fill = "lightgray"
-	case models.START:
+	case grid_world.START:
 		fill = "lightblue"
-	case models.FINISH:
+	case grid_world.FINISH:
 		fill = "lightyellow"
 	}
 	return

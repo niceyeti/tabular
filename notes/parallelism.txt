@@ -18,14 +18,15 @@ worker; thus the problem reduces to ensuring the uniqueness of n integers. Log(m
 is possible if one hashed the matrix indices to a smaller set of locks. Is there instead a 
 CSP-style pattern for communicating instead of locking?
 Some spitball solutions:
-1) Implement AtomicFloat64: this likely provides the most general solution for concurrent numerical ops
+1) Implement matrix entries as AtomicFloat64: this likely provides the most general solution for concurrent numerical ops
 2) Hash item indices to a smaller set of locks
 3) Refactored workers: workers generate and send individual matrix updates over a chan to a single writer
 Domain-specific solutions for RL:
-4) Location manager: workers derive their transitions from a single policy routine that ensures they traverse to unique positions
-5) Workers TryWriteLock() around a bit-set of current worker positions; if a state transition would collide with another worker,\
+4) Location manager: workers derive their transitions from a single policy routine/oracle that ensures they traverse to unique positions.
+   But this provides only incidental coordination.
+5) Workers TryWriteLock() around a bit-set or sync.map of current worker positions; if a state transition would collide with another worker,\
    pick a different state at random until TryWriteLock() succeeds.
-   This could be done most robustly using a sync.Map of current agent locations.
+   This could be done using a sync.Map of agent current locations.
 Likely best solutions to generic problem of n-workers locking m items, where n << m:
 6) AtomicBitset: Implement an atomic bit-set, declare one of size i*j,
  and then have agents call Take(i,j) to set the bit at that location. It either:

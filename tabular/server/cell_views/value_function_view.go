@@ -11,7 +11,7 @@ import (
 	channerics "github.com/niceyeti/channerics/channels"
 )
 
-// ValueFunction provides a view of the current value function as a 2d
+// ValueFunction presents a view of the current value function as a 2d
 // projection of the 3d function (x,y,value).
 type ValueFunction struct {
 	id      string
@@ -39,16 +39,15 @@ func (vf *ValueFunction) Updates() <-chan []fastview.EleUpdate {
 var (
 	// TODO: some of these are parameters that must be set per the first [][]Cell update dimensions.
 	width, height float64      // canvas size in pixels
-	cellDim       float64 = 80 // Cell height/width size in pixels
+	cellDim       float64 = 80 // cell height/width size in pixels
 	cells         float64      // number of grid cells
 	xyscale       float64      // pixels per x or y unit
 	zscale        float64      // pixels per z unit
 	// ang could easily be a dynamic parameter, from the user or otherwise, for a fixed set of view angles (30, 45, etc.)
-	ang                     = math.Pi / 6 // angle of x, y axes (e.g. =30°)
-	setViewParams sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
+	ang                      = math.Pi / 6 // angle of x, y axes (e.g. =30°)
+	sinAng, cosAng           = math.Sin(ang), math.Cos(ang)
+	setViewParams  sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
 )
-
-var sinAng, cosAng = math.Sin(ang), math.Cos(ang)
 
 func setParams(cs [][]Cell) {
 	cells = float64(len(cs))
@@ -59,7 +58,7 @@ func setParams(cs [][]Cell) {
 }
 
 // Project applies an isometric projection to the passed points.
-func project(x, y, z float64) (float64, float64) {
+func projectIso(x, y, z float64) (float64, float64) {
 	sx := (x - y) * cosAng * xyscale
 	sy := (x+y)*sinAng*xyscale - z*zscale
 	return sx, sy
@@ -88,10 +87,10 @@ func makeFuncPolygon(
 	fp = &funcPolygon{
 		Id: id,
 	}
-	fp.ax, fp.ay = project(float64(cellA.X), float64(cellA.Y), cellA.Max)
-	fp.bx, fp.by = project(float64(cellB.X), float64(cellB.Y), cellB.Max)
-	fp.cx, fp.cy = project(float64(cellC.X), float64(cellC.Y), cellC.Max)
-	fp.dx, fp.dy = project(float64(cellD.X), float64(cellD.Y), cellD.Max)
+	fp.ax, fp.ay = projectIso(float64(cellA.X), float64(cellA.Y), cellA.Max)
+	fp.bx, fp.by = projectIso(float64(cellB.X), float64(cellB.Y), cellB.Max)
+	fp.cx, fp.cy = projectIso(float64(cellC.X), float64(cellC.Y), cellC.Max)
+	fp.dx, fp.dy = projectIso(float64(cellD.X), float64(cellD.Y), cellD.Max)
 	return
 }
 
@@ -245,7 +244,7 @@ func getRGBFill(avgVal, minVal, maxVal float64) string {
 	return fmt.Sprintf("rgb(%d%%,0%%,%d%%)", redPct, 100-redPct)
 }
 
-// Parse returns an svg of polygons plotting that values function surface as a 2D projection.
+// Parse returns an svg of polygons plotting the value-function surface as a 2D projection.
 func (vf *ValueFunction) Parse(
 	t *template.Template,
 ) (name string, err error) {

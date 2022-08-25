@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"tabular/models"
+	"tabular/grid_world"
 	"tabular/server/cell_views"
 	"tabular/server/fastview"
 
@@ -23,15 +23,15 @@ type RootView struct {
 // NewRootView create the main page and the views it contains.
 func NewRootView(
 	ctx context.Context,
-	initialStates [][][][]models.State,
-	stateUpdates <-chan [][][][]models.State,
+	initialStates [][][][]grid_world.State,
+	stateUpdates <-chan [][][][]grid_world.State,
 ) *RootView {
 	// Build all of the views on server construction. This is a tad weird, and has alternatives.
 	// For example views could be constructed on the fly per endpoint, broken out by view (separate pages).
 	// But this could also be done by building/managing the views in advance and querying them on the fly.
 	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
 	// and extends other options. Serving views is the server's only responsibility, so this fits.
-	views, err := fastview.NewViewBuilder[[][][][]models.State, [][]cell_views.Cell]().
+	views, err := fastview.NewViewBuilder[[][][][]grid_world.State, [][]cell_views.Cell]().
 		WithContext(ctx).
 		WithModel(stateUpdates, cell_views.Convert).
 		WithView(func(

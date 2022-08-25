@@ -16,7 +16,7 @@ import (
 	"math/rand"
 	"time"
 
-	. "tabular/models"
+	. "tabular/grid_world"
 
 	channerics "github.com/niceyeti/channerics/channels"
 )
