@@ -134,35 +134,39 @@ func (server *Server) publishEleUpdates(
 	ctx context.Context,
 	ws *websocket.Conn,
 ) {
-
-	// TODO: not sure this state machine is air tight, and will simplify.
-
 	// Watch for state updates and push them to the client.
 	// Updates are published per a max of updates per second.
 	last := time.Now()
-	resolution := time.Millisecond * 5000
+	pubResolution := time.Millisecond * 100
 	pingResolution := time.Millisecond * 500
-	pubCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	pingTicker := channerics.NewTicker(pubCtx.Done(), pingResolution)
+	pubCtx, cancelPub := context.WithCancel(ctx)
+	defer cancelPub()
+	pinger := channerics.NewTicker(pubCtx.Done(), pingResolution)
 	lastPong := time.Now()
 
 	// Monitor client health/disconnects
-	pongs := make(chan struct{})
-	defer close(pongs)
+	pong := make(chan struct{})
+	defer close(pong)
 	ws.SetPongHandler(func(appData string) error {
-		pongs <- struct{}{}
+		pong <- struct{}{}
 		return nil
 	})
 
-	// A read method must be called on the websocket so ping/pong and other control handlers are called.
+	// Calling a read method on the websocket in turn calls handlers (ping, pong, etc).
+	// Thus a read method must be called so ping/pong and other control handlers are called.
+	// A separate goroutine is required to monitor the blocking read call.
+	// A good example of satisfying the lib requirements is in the chat example:
+	// https://github.com/gorilla/websocket/blob/af47554f343b4675b30172ac301638d350db34a5/examples/chat/client.go
 	go func() {
 		for {
 			select {
 			case <-pubCtx.Done():
 				return
 			default:
+				// Blocks until a message is available, triggering the PongHandler when pongs are read.
+				// All errors from Read methods are permanent, hence publication must be cancelled.
 				if _, _, err := ws.ReadMessage(); err != nil {
+					cancelPub()
 					if isClosure(err) {
 						return
 					}
@@ -176,7 +180,7 @@ func (server *Server) publishEleUpdates(
 		select {
 		case <-pubCtx.Done():
 			return
-		case <-pingTicker:
+		case <-pinger:
 			if time.Since(lastPong) > pingResolution*2 {
 				fmt.Println("i said one ping only, vasiliy! closing conn")
 				return
@@ -188,11 +192,11 @@ func (server *Server) publishEleUpdates(
 				}
 				return
 			}
-		case <-pongs:
+		case <-pong:
 			lastPong = time.Now()
 		case updates := <-server.rootView.Updates():
 			// Drop updates when receiving too quickly.
-			if time.Since(last) < resolution {
+			if time.Since(last) < pubResolution {
 				break
 			}
 
