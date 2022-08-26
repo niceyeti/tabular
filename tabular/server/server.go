@@ -134,89 +134,96 @@ func (server *Server) publishEleUpdates(
 	ctx context.Context,
 	ws *websocket.Conn,
 ) {
-	publish := func(updates []fastview.EleUpdate) <-chan error {
-		errs := make(chan error)
-		go func() {
-			defer close(errs)
-			if err := ws.WriteJSON(updates); err != nil {
-				if websocket.IsUnexpectedCloseError(
-					err,
-					websocket.CloseGoingAway,
-					websocket.CloseAbnormalClosure) {
-					errs <- err
-				}
-			}
-		}()
-		return errs
-	}
 
-	// Monitor client health/disconnects
-	ws.SetPongHandler(func(appData string) error {
-		fmt.Println("Got me a pong!")
-		return nil
-	})
-	ws.SetPingHandler(func(appData string) error {
-		fmt.Println("Well jee, a ping!")
-		return nil
-	})
-
-	/*
-		go func() {
-			for range time.Tick(time.Second) {
-				err := ws.WriteMessage(0x9, []byte("PING"))
-				if err != nil {
-					fmt.Println(fmt.Errorf("pinger: %w", err))
-				}
-			}
-		}()
-	*/
+	// TODO: not sure this state machine is air tight, and will simplify.
 
 	// Watch for state updates and push them to the client.
-	// Updates are published per a max number of updates per second.
+	// Updates are published per a max of updates per second.
 	last := time.Now()
-	resolution := time.Millisecond
-	var errs <-chan error
-	sendCtx, cancel := context.WithCancel(ctx)
+	resolution := time.Millisecond * 5000
+	pingResolution := time.Millisecond * 500
+	pubCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	pingTicker := channerics.NewTicker(pubCtx.Done(), pingResolution)
+	lastPong := time.Now()
+
+	// Monitor client health/disconnects
+	pongs := make(chan struct{})
+	defer close(pongs)
+	ws.SetPongHandler(func(appData string) error {
+		pongs <- struct{}{}
+		return nil
+	})
+
+	// A read method must be called on the websocket so ping/pong and other control handlers are called.
+	go func() {
+		for {
+			select {
+			case <-pubCtx.Done():
+				return
+			default:
+				if _, _, err := ws.ReadMessage(); err != nil {
+					if isClosure(err) {
+						return
+					}
+					fmt.Println("read pump: ", err)
+				}
+			}
+		}
+	}()
 
 	for {
 		select {
-		case <-sendCtx.Done():
+		case <-pubCtx.Done():
 			return
-		case <-channerics.NewTicker(sendCtx.Done(), time.Millisecond*10):
-			_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
-			fmt.Println("Sending ping")
-			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+		case <-pingTicker:
+			if time.Since(lastPong) > pingResolution*2 {
+				fmt.Println("i said one ping only, vasiliy! closing conn")
 				return
 			}
+
+			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
+				if isError(err) {
+					fmt.Printf("ping failed: %T %v", err, err)
+				}
+				return
+			}
+		case <-pongs:
+			lastPong = time.Now()
 		case updates := <-server.rootView.Updates():
 			// Drop updates when receiving too quickly.
 			if time.Since(last) < resolution {
-				continue
-			}
-
-			// Await pending publication before publishing a subsequent one.
-			if errs != nil {
-				select {
-				case err, isErr := <-errs:
-					if isErr {
-						fmt.Printf("%T\n%v\n", err, err)
-						return
-					}
-				default:
-					continue
-				}
+				break
 			}
 
 			last = time.Now()
 			if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-				fmt.Printf("%T\n%v\n", err, err)
+				fmt.Printf("failed to set deadline: %T %v", err, err)
 				return
 			}
 
-			errs = publish(updates)
+			if err := ws.WriteJSON(updates); err != nil {
+				if isError(err) {
+					fmt.Printf("publish failed: %T %v", err, err)
+				}
+				return
+			}
 		}
 	}
+}
+
+func isError(err error) bool {
+	return err != nil && websocket.IsUnexpectedCloseError(
+		err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway)
+}
+
+func isClosure(err error) bool {
+	return err != nil && websocket.IsCloseError(
+		err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway)
 }
 
 func (server *Server) closeWebsocket(ws *websocket.Conn) {
