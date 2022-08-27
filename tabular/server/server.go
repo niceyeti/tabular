@@ -7,30 +7,11 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"time"
 
 	"tabular/grid_world"
 	"tabular/server/cell_views"
 	"tabular/server/fastview"
 	"tabular/server/root_view"
-
-	"github.com/gorilla/websocket"
-	channerics "github.com/niceyeti/channerics/channels"
-)
-
-var upgrader = websocket.Upgrader{}
-
-const (
-	// Time allowed to write a message to the peer.
-	writeWait = 1 * time.Second
-	// Maximum message size allowed from peer.
-	maxMessageSize = 8192
-	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
-	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
-	// Time to wait before force close on connection.
-	closeGracePeriod = 10 * time.Second
 )
 
 // Main TODOs:
@@ -104,139 +85,23 @@ func (server *Server) Serve() (err error) {
 	return
 }
 
+// NOTE: the websocket code is fubar until/if I refactor the server and fastviews. This code
+// does not strictly define the relationships between clients and websockets, nor closure.
 // serveWebsocket publishes state updates to the client via websocket.
 // TODO: managing multiple websockets, when multiple pages open, etc. These scenarios.
 // This currently assumes this handler is hit only once, one client.
 // TODO: handle closure and failure paths for websocket.
 func (server *Server) serveWebsocket(w http.ResponseWriter, r *http.Request) {
-	// DDOS risk here if server does not track and limit http->websocket upgrade attempts per client
-	ws, err := upgrader.Upgrade(w, r, nil)
+	// FWIW, there is a DDOS risk here by not limiting the number of websocket and http->websocket upgrade attempts per client.
+	client, err := fastview.NewClient(server.rootView.Updates(), w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Println("upgrade:", err)
+	}
+
+	if err := client.Sync(); err != nil {
+		log.Println("websocket endpoint:", err)
 		return
 	}
-
-	defer server.closeWebsocket(ws)
-	server.publishEleUpdates(r.Context(), ws)
-}
-
-// TODO: this code is now fubar until I refactor the server and fastviews. This code
-// does not define the relationships between clients and websockets, nor closure.
-// publishEleUpdates transforms state updates from the training method into
-// view updates sent to the client. "How can I test this" guides the decomposition of
-// components.
-// TODO: the websocket code exemplifies the externalmost layer in Uncle Bobs architecture: net,
-// db, drivers, etc. This should be broken out as such.
-// Note that taking too long here could block senders on the
-// state chan; this will surely change as code develops, be mindful of upstream effects.
-func (server *Server) publishEleUpdates(
-	ctx context.Context,
-	ws *websocket.Conn,
-) {
-	// Watch for state updates and push them to the client.
-	// Updates are published per a max of updates per second.
-	last := time.Now()
-	pubResolution := time.Millisecond * 100
-	pingResolution := time.Millisecond * 500
-	pubCtx, cancelPub := context.WithCancel(ctx)
-	defer cancelPub()
-	pinger := channerics.NewTicker(pubCtx.Done(), pingResolution)
-	lastPong := time.Now()
-
-	// Monitor client health/disconnects
-	pong := make(chan struct{})
-	defer close(pong)
-	ws.SetPongHandler(func(appData string) error {
-		pong <- struct{}{}
-		return nil
-	})
-
-	// Calling a read method on the websocket in turn calls handlers (ping, pong, etc).
-	// Thus a read method must be called so ping/pong and other control handlers are called.
-	// A separate goroutine is required to monitor the blocking read call.
-	// A good example of satisfying the lib requirements is in the chat example:
-	// https://github.com/gorilla/websocket/blob/af47554f343b4675b30172ac301638d350db34a5/examples/chat/client.go
-	go func() {
-		for {
-			select {
-			case <-pubCtx.Done():
-				return
-			default:
-				// Blocks until a message is available, triggering the PongHandler when pongs are read.
-				// All errors from Read methods are permanent, hence publication must be cancelled.
-				if _, _, err := ws.ReadMessage(); err != nil {
-					cancelPub()
-					if isClosure(err) {
-						return
-					}
-					fmt.Println("read pump: ", err)
-				}
-			}
-		}
-	}()
-
-	for {
-		select {
-		case <-pubCtx.Done():
-			return
-		case <-pinger:
-			if time.Since(lastPong) > pingResolution*2 {
-				fmt.Println("i said one ping only, vasiliy! closing conn")
-				return
-			}
-
-			if err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
-				if isError(err) {
-					fmt.Printf("ping failed: %T %v", err, err)
-				}
-				return
-			}
-		case <-pong:
-			lastPong = time.Now()
-		case updates := <-server.rootView.Updates():
-			// Drop updates when receiving too quickly.
-			if time.Since(last) < pubResolution {
-				break
-			}
-
-			last = time.Now()
-			if err := ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-				fmt.Printf("failed to set deadline: %T %v", err, err)
-				return
-			}
-
-			if err := ws.WriteJSON(updates); err != nil {
-				if isError(err) {
-					fmt.Printf("publish failed: %T %v", err, err)
-				}
-				return
-			}
-		}
-	}
-}
-
-func isError(err error) bool {
-	return err != nil && websocket.IsUnexpectedCloseError(
-		err,
-		websocket.CloseNormalClosure,
-		websocket.CloseGoingAway)
-}
-
-func isClosure(err error) bool {
-	return err != nil && websocket.IsCloseError(
-		err,
-		websocket.CloseNormalClosure,
-		websocket.CloseGoingAway)
-}
-
-func (server *Server) closeWebsocket(ws *websocket.Conn) {
-	_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
-	_ = ws.WriteMessage(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-	time.Sleep(closeGracePeriod)
-	ws.Close()
 }
 
 // Serve the index.html main page.

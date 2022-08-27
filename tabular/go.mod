@@ -6,6 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/niceyeti/channerics v0.0.0-20220812202906-6b1aaeedc2b8
 	github.com/smartystreets/goconvey v1.7.2
+	golang.org/x/sync v0.0.0-20220819030929-7fc1605a5dde
 )
 
 require (
