@@ -26,10 +26,14 @@ const (
 	pongWait = pingResolution * 4
 )
 
-var upgrader = websocket.Upgrader{}
+var (
+	upgrader = websocket.Upgrader{}
+	// ErrPongDeadlineExceeded indicates too much time elapsed without a pong from the client.
+	ErrPongDeadlineExceeded error = errors.New("client disconnect, pong deadline exceeded")
+)
 
 // A client encapsulates a mechanism for publishing updates unidirectionally
-// to web clients via websocket. As much as possible I'd like this to represent
+// to websocket clients. As much as possible I'd like this to represent
 // a standard websocket client, including the future capability of reading client
 // messages, such as posts (i.e., a client page could monitor key strokes for view commands).
 // This client could serve as the basis for a full-fledged server-defined game client,
@@ -89,8 +93,6 @@ func (cli *client[T]) Sync() error {
 
 	return group.Wait()
 }
-
-var ErrPongDeadlineExceeded error = errors.New("client disconnect, pong deadline exceeded")
 
 // Runs the ping-pong for the client liveness check.
 // NOTE: This function requires that readPump is running to ensure the pong handler is called.
@@ -201,15 +203,20 @@ func isError(err error) bool {
 		websocket.CloseGoingAway)
 }
 
+/*
 func isClosure(err error) bool {
 	return err != nil && websocket.IsCloseError(
 		err,
 		websocket.CloseNormalClosure,
 		websocket.CloseGoingAway)
 }
+*/
 
 // ErrSockCongestion indicates there are too many waiters on the socket for a given op.
 var ErrSockCongestion = errors.New("sock op failed due to congestion")
+
+// ErrSockClosed is returned when a read/write is attempted after sock closure.
+var ErrSockClosed = errors.New("sock closed")
 
 const (
 	readDeadline     = time.Second
@@ -224,6 +231,7 @@ type websock struct {
 	readSem  chan struct{}
 	writeSem chan struct{}
 	ws       *websocket.Conn
+	closed   chan struct{}
 }
 
 func NewWebSocket(ws *websocket.Conn) *websock {
@@ -231,6 +239,7 @@ func NewWebSocket(ws *websocket.Conn) *websock {
 		readSem:  make(chan struct{}, 1),
 		writeSem: make(chan struct{}, 1),
 		ws:       ws,
+		closed:   make(chan struct{}),
 	}
 }
 
@@ -240,8 +249,22 @@ func (sock *websock) Conn() *websocket.Conn {
 	return sock.ws
 }
 
+func (sock *websock) isClosed() bool {
+	select {
+	case <-sock.closed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Closes the websocket. This should only be called once no further read/writers exist.
-func (sock *websock) Close() {
+func (sock *websock) Close() error {
+	if sock.isClosed() {
+		return ErrSockClosed
+	}
+
+	// Blocks all subsequent read/write attempts
 	sock.readSem <- struct{}{}
 	sock.writeSem <- struct{}{}
 
@@ -250,7 +273,7 @@ func (sock *websock) Close() {
 		websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	time.Sleep(closeGracePeriod)
-	sock.ws.Close()
+	return sock.ws.Close()
 }
 
 // Read serializes read operations on the internal web socket.
@@ -258,6 +281,10 @@ func (sock *websock) Read(
 	ctx context.Context,
 	readFn func(*websocket.Conn) error,
 ) error {
+	if sock.isClosed() {
+		return ErrSockClosed
+	}
+
 	select {
 	case <-ctx.Done():
 		return nil
@@ -274,6 +301,10 @@ func (sock *websock) Write(
 	ctx context.Context,
 	writeFn func(*websocket.Conn) error,
 ) error {
+	if sock.isClosed() {
+		return ErrSockClosed
+	}
+
 	select {
 	case <-ctx.Done():
 		return nil
