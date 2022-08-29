@@ -35,7 +35,7 @@ var (
 // A client encapsulates a mechanism for publishing updates unidirectionally
 // to websocket clients. As much as possible I'd like this to represent
 // a standard websocket client, including the future capability of reading client
-// messages, such as posts (i.e., a client page could monitor key strokes for view commands).
+// messages (i.e., a client page could monitor and send key strokes for view commands).
 // This client could serve as the basis for a full-fledged server-defined game client,
 // whereby the server holds game state (possibly among multiple players) and synchronizes
 // idempotent web-client's views with it. Likewise shared realtime data displays.
@@ -48,8 +48,8 @@ type client[T any] struct {
 
 // NewClient returns a publisher for sending ui or other updates to clients
 // via websocket. Items in the updates chan should represent idempotent update
-// objects, such that intervening updates can be discarded when they are received
-// too quickly (> pub-rate), and only sending the latest update is sufficient to
+// objects, since intervening updates are discarded when they are received too
+// quickly (> pub-rate), and only sending the latest update is sufficient to
 // specify the new client state (a ui, for example).
 func NewClient[T any](
 	updates <-chan T,
@@ -202,15 +202,6 @@ func isError(err error) bool {
 		websocket.CloseNormalClosure,
 		websocket.CloseGoingAway)
 }
-
-/*
-func isClosure(err error) bool {
-	return err != nil && websocket.IsCloseError(
-		err,
-		websocket.CloseNormalClosure,
-		websocket.CloseGoingAway)
-}
-*/
 
 // ErrSockCongestion indicates there are too many waiters on the socket for a given op.
 var ErrSockCongestion = errors.New("sock op failed due to congestion")

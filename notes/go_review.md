@@ -8,4 +8,3 @@
     {{ end }}
     ```
 Otherwise pass a FuncMap
-* 

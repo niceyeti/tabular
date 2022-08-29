@@ -13,7 +13,7 @@
             "NODE_VERSION": "none"
         }
     },
-    "postCreateCommand": "go mod download",
+    "postCreateCommand": "cd tabular && go mod download",
     "runArgs": [
         "--cap-add=SYS_PTRACE",
         "--security-opt",
