@@ -46,7 +46,7 @@ func (af *AtomicFloat64) AtomicRead() (value float64) {
 // Atomically add to the float64.
 // Note: online versions of this repeatedly attempt to add @addend to the float in a for loop
 // until the addition succeeds, whether or not the pointee changes in between, which is
-// logically incorrect. If the pointee changes while we're operation upon it, it is better
+// logically incorrect. If the pointee changes while we're operating upon it, it is better
 // for the caller to know and take some other action (drop the update, recalculate, etc).
 func (af *AtomicFloat64) AtomicAdd(addend float64) (newVal float64, succeeded bool) {
 	old := af.AtomicRead()

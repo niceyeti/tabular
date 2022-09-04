@@ -1,0 +1,24 @@
+# A TrainingConfig contains all params that you would want to define separately
+# rather than baking into compiled code. This extends only the goal of defining
+# these outside of code; this is clearly not a reduced definition in CNF form.
+# In fact, the model for training params would need to be flexible per different
+# algorithms' hyper-params, agent policies, etc., or possibly even broken up completely
+# into separate config types: training, algorithms, etc. Nonetheless, the config
+# provides an automation mechanism, whereby a training regime could be started,
+# tracked, cancelled, and then restarted with improved parameters.
+kind: TrainingConfig
+def:
+  hyperParams:  # standard RL learning hyper-params, as a list
+  - key: epsilon
+    val: 0.1
+  - key: eta
+    val: 0.05
+  - key: gamma
+    val: 0.9
+  algorithm:
+    kind: alpha-monte-carlo # could have sub-details, since algorithms may have different sub components
+    restartState: rand   # something like "rand" or "init" to designate
+    policy: StaticRandAlphaMax # Policies can have complex structure, but I think a policy could be described via bits: static vs dynamical, e-greedy, random vs other, and the alpha param
+    convergence: 123 # Another example. This could define when to halt training. 
+  trainingDeadline:  # Self-explanatory, though this could be a hard deadline or a duration.
+    duration: 2m

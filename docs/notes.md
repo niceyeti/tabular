@@ -38,8 +38,7 @@
         * In english: the explicit average is equivalent to the old value plus the weighted difference of the current reward and old value.
 1) DP: Dynamic programming methods are derived directly from the Bellman equations and assume complete knowledge of the transition model and environment dynamics, thus typically required to be stationary.
     * Policy evaluation (prediction), policy improvement, value 
-2) Monte Carlo: MC methods estimate state values directly based on the average of values obtained after visiting those states, as long as
-all states are visited 'infinitely often'.
+2) Monte Carlo: MC methods estimate state values directly based on the average of values obtained after visiting those states, as long as all states are visited 'infinitely often'.
     * Allow estimating value at only one state or subset of states.
     * Allow both on and off-policy learning, which does allow bootstrapping from human experience.
 3) Temporal Differences: Like Monte Carlo methods, TD methods do not require a model of the environment; like DP methods, then estimate values stepwise from subsequent state values (bootstrapping).

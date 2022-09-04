@@ -13,13 +13,25 @@ reads/writes. This works okay, for now.
 But I'm curious about solving the more general case of a large, fixed data structure (for which the sync/atomic
 approach is not possible).
 
+Facts to keep in mind:
+* multi-dimensional matrices are just a representation of linear data; any tuple of matrix indices is merely an aliasing
+scheme for a single-index linear array of data.
+* traditional C-programming approaches patterns are a subset of solutions in Go, including lowest level
+  strategies like using CompareAndSwap instructions
+
+
 Getting into the weeds, the critical values are really the n numbers (matrix position) of each
 worker; thus the problem reduces to ensuring the uniqueness of n integers. Log(m) locks
 is possible if one hashed the matrix indices to a smaller set of locks. Is there instead a 
 CSP-style pattern for communicating instead of locking?
 Some spitball solutions:
 1) Implement matrix entries as AtomicFloat64: this likely provides the most general solution for concurrent numerical ops
-2) Hash item indices to a smaller set of locks
+2) Hash item indices to a smaller set of locks. This is similar to the concept of ShardedMap in 
+'Cloud Native Go' but is fairly fundamental: maintain a map of locks, indexed using a space-reduction scheme
+of some kind. For instance, workers could lock on row indices, thus generally they would be separated in some manner.
+But a more advanced scheme would use more locks, such as modding the row and column indices by a radius value 'r', and thus
+workers would lock only if on the same 'tile' (a sub region of the matrix) of size `r x r`. However for this hashing scheme
+the number of locks is still a function of m.
 3) Refactored workers: workers generate and send individual matrix updates over a chan to a single writer
 Domain-specific solutions for RL:
 4) Location manager: workers derive their transitions from a single policy routine/oracle that ensures they traverse to unique positions.

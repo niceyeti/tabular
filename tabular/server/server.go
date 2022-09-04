@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/gorilla/mux"
+
 	"tabular/grid_world"
 	"tabular/server/cell_views"
 	"tabular/server/fastview"
@@ -74,11 +76,16 @@ func NewServer(
 }
 
 func (server *Server) Serve() (err error) {
-	http.HandleFunc("/", server.serveIndex)
-	http.HandleFunc("/ws", server.serveWebsocket)
+	mux := mux.NewRouter()
+
+	mux.HandleFunc("/", server.serveIndex).
+		Methods(http.MethodGet)
+	mux.HandleFunc("/ws", server.serveWebsocket).
+		Methods(http.MethodGet)
+
 	//http.HandleFunc("/profile", pprof.Profile)
 
-	if err = http.ListenAndServe(server.addr, nil); err != nil {
+	if err = http.ListenAndServe(server.addr, mux); err != nil {
 		err = fmt.Errorf("serve: %w", err)
 	}
 

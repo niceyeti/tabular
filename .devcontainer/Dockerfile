@@ -1,5 +1,7 @@
 FROM godev:latest
 
+# The main dockerfile contains extended dev dependencies: latex, gRPC, etc.
+
 # Install Tex Live
 RUN apt-get update && apt-get -y upgrade \
     && apt-get -y install --no-install-recommends \
@@ -18,6 +20,9 @@ RUN curl -L http://cpanmin.us | perl - App::cpanminus \
     && cpanm File::HomeDir \
     && cpanm Unicode::GCString
 
+# install protoc for gRPC
+RUN apt-get install -y protobuf-compiler
+
 # Clean up
 RUN apt-get autoremove -y \
     && apt-get clean -y \
@@ -25,10 +30,6 @@ RUN apt-get autoremove -y \
 ENV DEBIAN_FRONTEND=dialog \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
-
-
-# TODO: latex not needed because of how disgustingly huge it is. Try the vs code extension instead.
-#RUN apt-get update && apt-get install texlive-latex-base texlive-fonts-recommended texlive-fonts-extra texlive-latex-extra
 
 # [Choice] Node.js version: none, lts/*, 16, 14, 12, 10
 ARG NODE_VERSION="none"

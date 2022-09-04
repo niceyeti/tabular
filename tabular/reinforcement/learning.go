@@ -14,11 +14,14 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"time"
 
 	. "tabular/grid_world"
 
 	channerics "github.com/niceyeti/channerics/channels"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 /*
@@ -73,6 +76,88 @@ example trajectory on the shortest path from start to finish; others might be an
 with map awareness. This heuristic is to enable metalearning from human examples, to avoid the problem of purely 'dumb' initial
 agent's that will take an eternity to randomly reach some goal state and thereby propagate useful information back.
 */
+
+type OuterConfig struct {
+	Kind string      `mapstructure:"kind"`
+	Def  interface{} `mapstructure:"def"`
+}
+
+// TrainingConfig is an initial stab at encoding algorithmic and training parameters outside of code.
+// This definition is by no means complete or fully factored, and doesn't need to be for now, it just
+// holds standard RL params like learning rates, gamma, epsilons for agent policy behavior, etc.
+type TrainingConfig struct {
+	// HyperParams is a key-val pair of param names and their value.
+	HyperParams []HyperParameter `mapstructure:"hyperParams"`
+	// Algorithm is an alg selector.
+	Algorithm map[string]string `mapstructure:"algorithm"`
+	// TrainingDeadline is a fixed deadline or duration describing when to terminate training.
+	TrainingDeadline map[string]string `mapstructure:"trainingDeadline"`
+}
+
+type HyperParameter struct {
+	key string  `yaml:"key"`
+	val float64 `yaml:"val"`
+}
+
+func (cfg *TrainingConfig) GetHyperParamOrDefault(param string, defaultVal float64) float64 {
+	for _, kvp := range cfg.HyperParams {
+		if kvp.key == param {
+			return kvp.val
+		}
+	}
+	return defaultVal
+}
+
+// WithTrainingDeadline returns a context extended by the training deadline, if one is specified.
+func (cfg *TrainingConfig) WithTrainingDeadline(
+	ctx context.Context,
+) (context.Context, error) {
+	if val, ok := cfg.TrainingDeadline["duration"]; ok {
+		if duration, err := time.ParseDuration(val); err != nil {
+			return nil, err
+		} else {
+			innerCtx, _ := context.WithTimeout(ctx, duration)
+			return innerCtx, nil
+		}
+	}
+	// FUTURE: support a hard-deadline. I don't see the use-case, since duration works just as well.
+	return ctx, nil
+}
+
+// FUTURE: a lesson learned from viper is that it doesn't seem very friendly toward multiple configs,
+// though I could be wrong. For example with multiple independent config files (training, server, etc)
+// viper's statefulness isn't very amenable. I could be wrong. Viper has a New() func. But I don't
+// understand why config libraries (viper, flags) are not implemented as stateless functions just
+// like serialization, of which config is an extension by a single degree. Also viper has quite a few
+// dependencies, which is silly.
+func FromYaml(path string) (*TrainingConfig, error) {
+	// There was no strong reason to use viper, and app config is somewhat fragmented currently, just test driving.
+	vp := viper.New()
+	vp.SetConfigFile(filepath.Base(path))
+	vp.SetConfigType("yaml")
+	vp.AddConfigPath(filepath.Dir(path))
+	var err error
+	if err = vp.ReadInConfig(); err != nil {
+		return nil, err
+	}
+
+	outerConfig := &OuterConfig{}
+	if err = vp.Unmarshal(outerConfig); err != nil {
+		return nil, err
+	}
+
+	var spec []byte
+	if spec, err = yaml.Marshal(outerConfig.Def); err != nil {
+		return nil, err
+	}
+
+	innerConfig := &TrainingConfig{}
+	if err = yaml.Unmarshal(spec, innerConfig); err != nil {
+		return nil, err
+	}
+
+	return innerConfig, nil
+}
 
 // For MC random starts, grab a random state that is on the track (i.e. is actionable to the agent).
 func getRandomStartState(states [][][][]State) (start_state *State) {
@@ -239,8 +324,9 @@ func get_max_successor(states [][][][]State, cur_state *State) (target *State, a
 func Train(
 	ctx context.Context,
 	states [][][][]State,
+	config *TrainingConfig,
 	nworkers int,
-	progressFn func(int, <-chan struct{})) {
+	progressFn ProgressFunc) {
 	// initialize the state values to something slightly larger than the lowest reward, for stability
 	initStateVals(states, COLLISION_REWARD)
 	// display startup policy
@@ -249,15 +335,21 @@ func Train(
 	ShowMaxValues(states)
 	ShowGrid(states)
 	alphaMonteCarloVanillaTrain(
+		ctx,
 		states,
 		nworkers,
-		progressFn,
-		ctx.Done())
+		config,
+		progressFn)
 }
 
 func initStateVals(states [][][][]State, val float64) {
 	Visit(states, func(s *State) { s.Value.AtomicSet(val) })
 }
+
+// ProgressFunc is a callback by which the training method can lend progress details,
+// while exercising some level of control over its cancellation to prevent blocking.
+// ProgressFunc is synchronous/blocking and should be defined to complete quickly.
+type ProgressFunc func(context.Context, int)
 
 /*
 Implements vanilla alpha-MC using a fixed number of workers to generate episodes
@@ -266,19 +358,26 @@ which are sent to the estimator to update the state values. Coordination is simp
   - processor halts the agents to empty its episode queue and update state values
 */
 func alphaMonteCarloVanillaTrain(
+	ctx context.Context,
 	states [][][][]State,
 	nworkers int,
-	progressFn func(int, <-chan struct{}),
-	done <-chan struct{}) {
+	config *TrainingConfig,
+	progressFn ProgressFunc) {
+
+	// Epsilon: the agent exploration/exploitation policy param.
+	epsilon := config.GetHyperParamOrDefault("epsilon", 0.1)
+	// Eta: the learning rate
+	eta := config.GetHyperParamOrDefault("alpha", 0.01)
+	// Gamma: the look-ahead parameter, or how much to value future state values.
+	gamma := config.GetHyperParamOrDefault("gamma", 0.9)
+
 	// Note: remember to exclude invalid/out-of-bound states and zero-velocity states.
 	rand.Seed(time.Now().Unix())
-	rand_restart := func() *State {
+	randRestart := func() *State {
 		return getRandomStartState(states)
 	}
 
-	// The policy function, by which the agents choose actions to explore/exploit the environment.
-	epsilon := 0.1
-	policy_alpha_max := func(state *State) (target *State, action *Action) {
+	policyAlphaMax := func(state *State) (target *State, action *Action) {
 		r := rand.Float64()
 		if r <= epsilon {
 			// Exploration: do something random
@@ -295,8 +394,8 @@ func alphaMonteCarloVanillaTrain(
 	agent_worker := func(
 		done <-chan struct{},
 		states [][][][]State,
-		start_state_gen func() *State,
-		policy_fn func(*State) (*State, *Action)) <-chan *Episode {
+		genInitState func() *State,
+		policyFn func(*State) (*State, *Action)) <-chan *Episode {
 
 		episodes := make(chan *Episode)
 		go func() {
@@ -312,9 +411,9 @@ func alphaMonteCarloVanillaTrain(
 				}
 
 				episode := Episode{}
-				state := start_state_gen()
+				state := genInitState()
 				for !is_terminal(state) {
-					successor, action := policy_fn(state)
+					successor, action := policyFn(state)
 					reward := getReward(successor)
 					episode = append(
 						episode,
@@ -346,18 +445,15 @@ func alphaMonteCarloVanillaTrain(
 	// feasibly requires a lock?
 	workers := []<-chan *Episode{}
 	for i := 0; i < nworkers; i++ {
-		ch := agent_worker(done, states, rand_restart, policy_alpha_max)
+		ch := agent_worker(ctx.Done(), states, randRestart, policyAlphaMax)
 		workers = append(workers, ch)
 	}
-	episodes := channerics.Merge(done, workers...)
+	episodes := channerics.Merge(ctx.Done(), workers...)
 
-	// TODO: I deliberately slowed the agent for monte carlo. Would be nice to grab hyper-params as separate config (file, etc).
-	alpha := 0.0025
-	gamma := 0.9
 	// Estimator updates state values from agent experiences.
 	estimator := func(
-		alpha, gamma float64,
-		progressFn func(int, <-chan struct{})) {
+		eta, gamma float64,
+		progressFn ProgressFunc) {
 		episode_count := 0
 		for episode := range episodes {
 			// Set terminal states to the value of the reward for stepping into them.
@@ -370,7 +466,7 @@ func alphaMonteCarloVanillaTrain(
 				step := (*episode)[t]
 				reward += step.Reward
 				val := step.State.Value.AtomicRead()
-				delta := alpha * (reward - val)
+				delta := eta * (reward - val)
 				// Note: intentionally discard rejected deltas. There won't be any, since add ops are serialized
 				// as there is a single estimator.
 				_, _ = step.State.Value.AtomicAdd(delta)
@@ -378,8 +474,8 @@ func alphaMonteCarloVanillaTrain(
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)
 			episode_count++
-			progressFn(episode_count, done)
+			progressFn(ctx, episode_count)
 		}
 	}
-	go estimator(alpha, gamma, progressFn)
+	go estimator(eta, gamma, progressFn)
 }
