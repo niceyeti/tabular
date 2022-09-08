@@ -95,14 +95,14 @@ type TrainingConfig struct {
 }
 
 type HyperParameter struct {
-	key string  `yaml:"key"`
-	val float64 `yaml:"val"`
+	Key string  `yaml:"key"`
+	Val float64 `yaml:"val"`
 }
 
 func (cfg *TrainingConfig) GetHyperParamOrDefault(param string, defaultVal float64) float64 {
 	for _, kvp := range cfg.HyperParams {
-		if kvp.key == param {
-			return kvp.val
+		if kvp.Key == param {
+			return kvp.Val
 		}
 	}
 	return defaultVal
@@ -367,7 +367,7 @@ func alphaMonteCarloVanillaTrain(
 	// Epsilon: the agent exploration/exploitation policy param.
 	epsilon := config.GetHyperParamOrDefault("epsilon", 0.1)
 	// Eta: the learning rate
-	eta := config.GetHyperParamOrDefault("alpha", 0.01)
+	eta := config.GetHyperParamOrDefault("eta", 0.01)
 	// Gamma: the look-ahead parameter, or how much to value future state values.
 	gamma := config.GetHyperParamOrDefault("gamma", 0.9)
 
