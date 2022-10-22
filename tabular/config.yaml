@@ -10,11 +10,11 @@ kind: TrainingConfig
 def:
   hyperParams:  # standard RL learning hyper-params, as a list
   - key: epsilon
-    val: 0.01
+    val: 0.001
   - key: eta
     val: 0.01
   - key: gamma
-    val: 0.99
+    val: 0.9
   algorithm:
     kind: alpha-monte-carlo # could have sub-details, since algorithms may have different sub components
     restartState: rand   # something like "rand" or "init" to designate

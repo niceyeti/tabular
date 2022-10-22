@@ -111,17 +111,18 @@ func (cfg *TrainingConfig) GetHyperParamOrDefault(param string, defaultVal float
 // WithTrainingDeadline returns a context extended by the training deadline, if one is specified.
 func (cfg *TrainingConfig) WithTrainingDeadline(
 	ctx context.Context,
-) (context.Context, error) {
+) (context.Context, context.CancelFunc, error) {
 	if val, ok := cfg.TrainingDeadline["duration"]; ok {
 		if duration, err := time.ParseDuration(val); err != nil {
-			return nil, err
+			return nil, nil, err
 		} else {
-			innerCtx, _ := context.WithTimeout(ctx, duration)
-			return innerCtx, nil
+			innerCtx, cancel := context.WithTimeout(ctx, duration)
+			return innerCtx, cancel, nil
 		}
 	}
 	// FUTURE: support a hard-deadline. I don't see the use-case, since duration works just as well.
-	return ctx, nil
+	defaultCtx, cancel := context.WithCancel(ctx)
+	return defaultCtx, cancel, nil
 }
 
 // FUTURE: a lesson learned from viper is that it doesn't seem very friendly toward multiple configs,

@@ -59,7 +59,7 @@ const (
 	COLLISION_REWARD = -5
 	STEP_REWARD      = -1
 	// A finishing reward is not part of the problem def. but is useful for observation.
-	FINISH_REWARD = 15
+	FINISH_REWARD = 10
 )
 
 // The classical track and a smaller debug track for development.

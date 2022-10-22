@@ -97,16 +97,15 @@ func selectTrack() []string {
 	return grid_world.FullTrack
 }
 
-func runApp() (err error) {
+// FUTURE: no exit conditions (cancellation, deadlines, contexts) are fully defined here.
+func runApp(ctx context.Context) (err error) {
 	var algConfig *reinforcement.TrainingConfig
 	if algConfig, err = reinforcement.FromYaml("./config.yaml"); err != nil {
 		return
 	}
 
-	appCtx, appCancel := context.WithCancel(context.TODO())
-	defer appCancel()
-
-	trainingCtx, _ := algConfig.WithTrainingDeadline(appCtx)
+	trainingCtx, cancel, err := algConfig.WithTrainingDeadline(ctx)
+	defer cancel()
 
 	racetrack := selectTrack()
 	states = grid_world.Convert(racetrack)
@@ -122,7 +121,7 @@ func runApp() (err error) {
 	// Run server
 	var srv *server.Server
 	if srv, err = server.NewServer(
-		appCtx,
+		ctx,
 		addr,
 		states,
 		stateUpdates,
@@ -159,7 +158,7 @@ func print_values_async(states [][][][]State, done <-chan struct{}) {
 
 // TODO: use mixedCaps throughout
 func main() {
-	if err := runApp(); err != nil {
+	if err := runApp(context.Background()); err != nil {
 		fmt.Println(err)
 	}
 }
