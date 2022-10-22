@@ -52,9 +52,14 @@ const (
 	MIN_ACCELERATION  = -1
 	NUM_ACCELERATIONS = MAX_ACCELERATION - MIN_ACCELERATION + 1
 
-	// Rewards
+	// Rewards. These are from the problem def. but are fun to play with
+	// to observe the behavior of different algorithms. For example alpha-MC
+	// does not boot strap, so the agent has a step budget such that at a certain
+	// distance its best option is simply to crash.
 	COLLISION_REWARD = -5
 	STEP_REWARD      = -1
+	// A finishing reward is not part of the problem def. but is useful for observation.
+	FINISH_REWARD = 15
 )
 
 // The classical track and a smaller debug track for development.

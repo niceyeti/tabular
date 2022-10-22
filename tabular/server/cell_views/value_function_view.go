@@ -215,8 +215,6 @@ func (vf *ValueFunction) onUpdate(
 		}
 	}
 
-	//os.Exit(0)
-
 	// Shift all values by the min x and y to center the view, and scale it down to fit.
 	// FWIW, this could be done using fewer computations with an enclosing <g transform="translate(minx, miny)">
 
@@ -247,7 +245,6 @@ func (vf *ValueFunction) onUpdate(
 func getRGBFill(avgVal, minVal, maxVal float64) string {
 	// Allocate fill based on proportion of blue and red only; this gives a simple comparative range.
 	x := (avgVal - minVal) / (maxVal - minVal)
-	//fmt.Printf("x avg min max   %f  %f  %f  %f\n", x, avgVal, minVal, maxVal)
 	bluePct := int(math.Abs(100.0 * x))
 	return fmt.Sprintf("rgb(%d%%,0%%,%d%%)", 100-bluePct, bluePct)
 }

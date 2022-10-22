@@ -298,7 +298,7 @@ func getReward(target *State) (reward float64) {
 	case START, TRACK:
 		reward = STEP_REWARD
 	case FINISH:
-		reward = 15
+		reward = FINISH_REWARD
 	default:
 		// Degenerate case; unreachable if all actions are covered in switch.
 		panic("Shazbot!")
