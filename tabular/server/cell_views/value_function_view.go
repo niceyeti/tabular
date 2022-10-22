@@ -20,7 +20,7 @@ type ValueFunction struct {
 
 func NewValueFunction(
 	done <-chan struct{},
-	cells <-chan [][]Cell,
+	cells <-chan [][]CellViewModel,
 ) (vf *ValueFunction) {
 	id := "valuefunction"
 	if strings.Contains(id, "-") {
@@ -49,7 +49,7 @@ var (
 	setViewParams  sync.Once = sync.Once{} // TODO: sync.Once is a code smell. This should change when views are refactored to pass in the initial [][]Cell values.
 )
 
-func setParams(cs [][]Cell) {
+func setParams(cs [][]CellViewModel) {
 	cells = float64(len(cs))
 	width = cells * cellDim
 	height = float64(len(cs[0])) * cellDim
@@ -67,10 +67,10 @@ func projectIso(x, y, z float64) (float64, float64) {
 // Cell-A is bottom left, Cell-B is top left, Cell-C is top right, and Cell-D is bottom right.
 // The polygon is projected into 2d using the lissajous transformation described in The Go Programming Language.
 func getPolyPoints(
-	cellA Cell,
-	cellB Cell,
-	cellC Cell,
-	cellD Cell,
+	cellA CellViewModel,
+	cellB CellViewModel,
+	cellC CellViewModel,
+	cellD CellViewModel,
 ) string {
 	return makeFuncPolygon("", cellA, cellB, cellC, cellD).String()
 }
@@ -79,10 +79,10 @@ func getPolyPoints(
 // The polygon is projected into 2d using a similar to the lissajous transformation described in The Go Programming Language.
 func makeFuncPolygon(
 	id string,
-	cellA Cell,
-	cellB Cell,
-	cellC Cell,
-	cellD Cell,
+	cellA CellViewModel,
+	cellB CellViewModel,
+	cellC CellViewModel,
+	cellD CellViewModel,
 ) (fp *funcPolygon) {
 	fp = &funcPolygon{
 		Id: id,
@@ -143,18 +143,19 @@ func (fp *funcPolygon) MaxY() float64 {
 	return maxFour(fp.ay, fp.by, fp.cy, fp.dy)
 }
 
-func avg(f ...float64) float64 {
-	n, sum := 0.0, 0.0
-	for _, fn := range f {
-		sum += fn
+func avg(vals ...float64) (mu float64) {
+	n := 0.0
+	for i := range vals {
+		mu += vals[i]
 		n++
 	}
-	return sum / n
+	mu = mu / n
+	return
 }
 
 // Returns the set of view updates needed for the view to reflect current values.
 func (vf *ValueFunction) onUpdate(
-	cells [][]Cell,
+	cells [][]CellViewModel,
 ) (ops []fastview.EleUpdate) {
 	// TODO: refactor to move/remove
 	setViewParams.Do(func() { setParams(cells) })
@@ -164,8 +165,9 @@ func (vf *ValueFunction) onUpdate(
 	// manually shaded with the average of its four max-values. The alternative to this is
 	// that each polygon has-a linear-gradient than it updates, using some complex math.
 	minVal, maxVal := math.MaxFloat64, -math.MaxFloat64
-	for _, row := range cells {
-		for _, cell := range row {
+	for ri := range cells {
+		for ci := range cells[ri] {
+			cell := cells[ri][ci]
 			minVal = math.Min(minVal, cell.Max)
 			maxVal = math.Max(maxVal, cell.Max)
 		}
@@ -186,12 +188,6 @@ func (vf *ValueFunction) onUpdate(
 				cellA, cellB, cellC, cellD,
 			)
 
-			xmin = math.Min(xmin, polygon.MinX())
-			xmax = math.Max(xmax, polygon.MaxX())
-
-			ymin = math.Min(ymin, polygon.MinY())
-			ymax = math.Max(ymax, polygon.MaxY())
-
 			avgVal := avg(cellA.Max, cellB.Max, cellC.Max, cellD.Max)
 			fill := getRGBFill(avgVal, minVal, maxVal)
 
@@ -208,8 +204,18 @@ func (vf *ValueFunction) onUpdate(
 					},
 				},
 			})
+
+			// Track the svg min and max for scaling below.
+			// Note: these are visual values, not estimation values.
+			xmin = math.Min(xmin, polygon.MinX())
+			xmax = math.Max(xmax, polygon.MaxX())
+
+			ymin = math.Min(ymin, polygon.MinY())
+			ymax = math.Max(ymax, polygon.MaxY())
 		}
 	}
+
+	//os.Exit(0)
 
 	// Shift all values by the min x and y to center the view, and scale it down to fit.
 	// FWIW, this could be done using fewer computations with an enclosing <g transform="translate(minx, miny)">
@@ -239,9 +245,11 @@ func (vf *ValueFunction) onUpdate(
 // Returns an RGB value defined by where avgVal lies along the number line between minVal and maxVal.
 // Some proportion of RGB values is assigned based on this relative position.
 func getRGBFill(avgVal, minVal, maxVal float64) string {
-	// Allocate fill based on proportion of blue and red only; this should give a basic relative range.
-	redPct := int(100.0 * math.Abs(avgVal) / math.Abs(maxVal-minVal))
-	return fmt.Sprintf("rgb(%d%%,0%%,%d%%)", redPct, 100-redPct)
+	// Allocate fill based on proportion of blue and red only; this gives a simple comparative range.
+	x := (avgVal - minVal) / (maxVal - minVal)
+	//fmt.Printf("x avg min max   %f  %f  %f  %f\n", x, avgVal, minVal, maxVal)
+	bluePct := int(math.Abs(100.0 * x))
+	return fmt.Sprintf("rgb(%d%%,0%%,%d%%)", 100-bluePct, bluePct)
 }
 
 // Parse returns an svg of polygons plotting the value-function surface as a 2D projection.

@@ -17,7 +17,7 @@ type ValuesGrid struct {
 
 func NewValuesGrid(
 	done <-chan struct{},
-	cells <-chan [][]Cell,
+	cells <-chan [][]CellViewModel,
 ) (vg *ValuesGrid) {
 	id := "valuesgrid"
 	if strings.Contains(id, "-") {
@@ -89,7 +89,7 @@ func (vg *ValuesGrid) Parse(
 
 // Returns the set of view updates needed for the view to reflect current values.
 func (vg *ValuesGrid) onUpdate(
-	cells [][]Cell,
+	cells [][]CellViewModel,
 ) (ops []fastview.EleUpdate) {
 	for _, row := range cells {
 		for _, cell := range row {
@@ -107,7 +107,6 @@ func (vg *ValuesGrid) onUpdate(
 			ops = append(ops, fastview.EleUpdate{
 				EleId: fmt.Sprintf("%d-%d-policy-arrow", cell.X, cell.Y),
 				Ops: []fastview.Op{
-					//{"transform", fmt.Sprintf("rotate(%d, %d, %d) scale(1, %d)", cell.PolicyArrowRotation, cell.X, cell.Y, cell.PolicyArrowScale)},
 					{
 						Key:   "transform",
 						Value: fmt.Sprintf("rotate(%d)", cell.PolicyArrowRotation),

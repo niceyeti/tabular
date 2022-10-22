@@ -37,23 +37,22 @@ type Step struct {
 // Episode is a sequence of Steps.
 type Episode []Step
 
-// Track cell types
 const (
+	// Track cell types
 	WALL   = 'W'
 	TRACK  = 'o'
 	START  = '-'
 	FINISH = '+'
-)
 
-// Acceleration actions in the x or y direction.
-const (
-	MAX_VELOCITY   = 4
-	MIN_VELOCITY   = 0
-	NUM_VELOCITIES = 5
-)
+	// Kinematic actions in the x and y direction. A velocity of 1 means traveling one grid cell per time step.
+	MAX_VELOCITY      = 4
+	MIN_VELOCITY      = -MAX_VELOCITY
+	NUM_VELOCITIES    = MAX_VELOCITY - MIN_VELOCITY + 1
+	MAX_ACCELERATION  = 1
+	MIN_ACCELERATION  = -1
+	NUM_ACCELERATIONS = MAX_ACCELERATION - MIN_ACCELERATION + 1
 
-// Rewards
-const (
+	// Rewards
 	COLLISION_REWARD = -5
 	STEP_REWARD      = -1
 )
@@ -108,7 +107,7 @@ var (
 	}
 )
 
-// Converts a tack input string array to an actual state grid of positions and velocities.
+// Converts a track input string array to an actual state grid of positions and velocities.
 // The orientation is such that the bottom/left most position of the track (when printed in a console) is (0,0).
 // This gives awkward reverse-iteration displaying, but makes sense for the problem dynamics: +1 velocity yields +1 position in some array.
 // Note that this is just an (X x Y x VX x VY) size matrix and would be implemented as such in Python.
@@ -124,13 +123,14 @@ func Convert(track []string) (states [][][][]State) {
 		states = append(states, make([][][]State, 0, height))
 		// And bottom to top...
 		for y := 0; y < height; y++ {
-			states[x] = append(states[x], make([][]State, 0, MAX_VELOCITY+1))
+			states[x] = append(states[x], make([][]State, 0, NUM_VELOCITIES))
 			// Select cells bottom up, so the grid has a logical progression where positive x/y velocities are right/up, from (0,0).
 			cell_type := rune(track[height-y-1][x])
-			// Augment the track cell with x/y velocity values per each state
-			for vx := 0; vx < MAX_VELOCITY+1; vx++ {
-				states[x][y] = append(states[x][y], make([]State, 0, MAX_VELOCITY+1)) // +1 since zero is included as a velocity.
-				for vy := 0; vy < MAX_VELOCITY+1; vy++ {
+			// Add vx/vy velocities per x/y state
+			for vxi := 0; vxi < NUM_VELOCITIES; vxi++ {
+				vx := MIN_VELOCITY + vxi
+				states[x][y] = append(states[x][y], make([]State, 0, NUM_VELOCITIES))
+				for vy := MIN_VELOCITY; vy < NUM_VELOCITIES; vy++ {
 					state := State{
 						X:        x,
 						Y:        y,
@@ -139,7 +139,7 @@ func Convert(track []string) (states [][][][]State) {
 						CellType: cell_type,
 						Value:    atomic_float.NewAtomicFloat64(0.0),
 					}
-					states[x][y][vx] = append(states[x][y][vx], state)
+					states[x][y][vxi] = append(states[x][y][vxi], state)
 				}
 			}
 		}
@@ -227,8 +227,7 @@ func ShowAvgValues(states [][][][]State) {
 			avg := 0.0
 			n := 0.0
 			for i := 0; i < len(velstates); i++ {
-				// From 1, since states for which both velocity components are zero or negative are excluded by problem def.
-				for j := 1; j < len(velstates[i]); j++ {
+				for j := 0; j < len(velstates[i]); j++ {
 					avg += velstates[i][j].Value.AtomicRead()
 					n++
 				}
@@ -242,55 +241,52 @@ func ShowAvgValues(states [][][][]State) {
 	fmt.Printf("Total: %.2f\n", total)
 }
 
-/*
-// Purely for debugging: print the entire state structs.
-func show_all(states [][][][]State, fn func(s *State) string) {
-	for y := range Rev(len(states)) {
-		for x := range states {
-			for _, vxs := range states[x][y] {
-				for _, state := range vxs {
-					fmt.Printf("%s ", fn(&state))
-				}
-			}
-			fmt.Println("")
-		}
-		fmt.Println("")
-	}
-}
-*/
-
-// Returns a printable run for the max direction value in some x/y grid position.
-// This is hyper simplified for console based display.
-// Note only > and ^ are possible via the problem definition, since velocity components are constrained to positive values.
+// Returns a rune representing the max velocity direction of this state.
+// This is a hyper simplified description for console-based debugging.
 func putMaxDir(state *State) rune {
-	if state.VX > state.VY {
-		return '>'
+	// VX has greatest magnitude
+	if math.Abs(float64(state.VX)) > math.Abs(float64(state.VY)) {
+		if state.VX > 0 {
+			return '>'
+		}
+		if state.VX < 0 {
+			return '<'
+		}
+		if state.VX == 0 {
+			return '='
+		}
 	}
-	if state.VX < state.VY {
+	// Else, VY has the greatest magnitude
+	if state.VY > 0 {
 		return '^'
 	}
-
+	if state.VY < 0 {
+		return 'v'
+	}
+	// VY == 0 or both are zero
 	return '='
 }
 
-// Returns the max-valued velocity state from the subset of velocity states, a clumsy operation purely for viewing.
-func MaxVelState(vel_states [][]State) (maxState *State) {
+// Returns the max-valued velocity state from the subset of velocity states,
+// a clumsy operation purely for viewing.
+func MaxVelState(states [][]State) (maxState *State) {
 	// Get the max value from the state subset of velocities
 	maxState = &State{
 		Value: atomic_float.NewAtomicFloat64(-math.MaxFloat64),
 	}
 	maxVal := maxState.Value.AtomicRead()
 
-	for vx := range vel_states {
-		for vy := range vel_states[vx] {
+	for vx := range states {
+		for vy := range states[vx] {
 			if vx == 0 && vy == 0 {
-				// Skip states whose velocity components are both zero, which are excluded by problem def.
+				// Skip states whose velocity components are both zero, which are excluded by problem def,
+				// except for the stationary start states.
 				continue
 			}
 
-			val := vel_states[vx][vy].Value.AtomicRead()
+			val := states[vx][vy].Value.AtomicRead()
 			if val > maxVal {
-				maxState = &vel_states[vx][vy]
+				maxState = &states[vx][vy]
 				maxVal = val
 			}
 		}
@@ -299,6 +295,7 @@ func MaxVelState(vel_states [][]State) (maxState *State) {
 	return
 }
 
+//nolint:unused // This is sometimes useful in development.
 func getStates(states [][][][]State, state_type rune) (start_states []*State) {
 	accumulator := func(state *State) {
 		if state.CellType == state_type {

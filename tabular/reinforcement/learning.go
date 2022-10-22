@@ -160,21 +160,36 @@ func FromYaml(path string) (*TrainingConfig, error) {
 }
 
 // For MC random starts, grab a random state that is on the track (i.e. is actionable to the agent).
-func getRandomStartState(states [][][][]State) (start_state *State) {
+func getRandomStartState(states [][][][]State) (start *State) {
 	max_x := len(states)
 	max_y := len(states[0])
 
-	start_state = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
-	for !(start_state.CellType == TRACK || start_state.CellType == START) {
-		start_state = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
+	// Select a random START or TRACK position
+	start = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
+	for !(start.CellType == TRACK || start.CellType == START) {
+		start = &states[rand.Int()%max_x][rand.Int()%max_y][0][0]
 	}
-	// Select a random non-zero velocity substate from this x/y position
+
+	// If its a START state, then the only valid velocity is zero.
+	if start.CellType == START {
+		// TODO: the relationship between indices and velocity values is a bad code smell.
+		// Previously the indices of the velocity values were aligned to their definition, which still lingers in the code.
+		zeroVelIndex := (MAX_VELOCITY - MIN_VELOCITY) / 2
+		start = &states[start.X][start.Y][zeroVelIndex][zeroVelIndex]
+		return
+	}
+
+	// Select a random non-stationary velocity substate from this x/y position
+	// TODO: note the case that a TRACK cell adjacent to a start state is selected with maximum
+	// velocity; this is invalid, since that state is unreachable. Leaving as-is for now; a
+	// practical assumption is that only states reachable from START states will matter once
+	// training completes.
 	rvx, rvy := 0, 0
 	for rvx == 0 && rvy == 0 {
 		rvx = rand.Int() % NUM_VELOCITIES
 		rvy = rand.Int() % NUM_VELOCITIES
 	}
-	start_state = &states[start_state.X][start_state.Y][rvx][rvy]
+	start = &states[start.X][start.Y][rvx][rvy]
 	return
 }
 
@@ -185,6 +200,8 @@ func getRandomStartState(states [][][][]State) (start_state *State) {
 // result in a collision; otherwise the agent will learn actions resembling 'teleports'
 // to new positions. Of course rigorous check forces checking quadratic paths, but this
 // will instead use simple collision checking, e.g. line-of-sight clearance from s to s'.
+// TODO: there are a bunch of implicit conditions and bounds checks in this function that
+// affect training and behavior. I need to review or refactor.
 func getSuccessor(
 	states [][][][]State,
 	cur_state *State,
@@ -202,7 +219,7 @@ func getSuccessor(
 	new_x := int(math.Max(math.Min(float64(cur_state.X+new_vx), max_x), 0))
 	new_y := int(math.Max(math.Min(float64(cur_state.Y+new_vy), max_y), 0))
 
-	successor = &states[new_x][new_y][new_vx][new_vy]
+	successor = &states[new_x][new_y][new_vx-MIN_VELOCITY][new_vy-MIN_VELOCITY]
 	if collision := checkTerminalCollision(states, cur_state, new_vx, new_vy); collision != nil {
 		successor = collision
 	}
@@ -210,43 +227,55 @@ func getSuccessor(
 	return
 }
 
-// The collision checking algorithm is a discrete simulation of what would kinematically
-// be some curving path based on the start position and velocity components. This returns
-// the first terminal state encountered if starting from the passed state and proceeding
-// for one time step with velocity components vx and vy. This is done by checking if the
-// region spanned by start and start + (vx,vy) contains any wall cells, a hyper-conservative
-// metric for collisions. Off grid actions are not accounted for.
-// Returns: the first state with which the agent would collide; nil, if no collision.
-func checkTerminalCollision(states [][][][]State, start *State, vx, vy int) (state *State) {
+// This collision check examines the path from @start along the velocities @vx and @vy for any
+// intervening collisions (walls). This is done by adding the unit vector of <vx,vy> to
+// the starting state's position until the final state is reached, <x+vx, y+vy>. If any
+// intermediate state is a wall/collision, it is returned, otherwise nil is returned.
+// This is a simple way of performing an approximate check of whether or not any state along
+// <vx,vy> from @start results in a collision (line of sight check).
+// TODO: check this math. This function is the most inefficient part of policy implementation.
+func checkTerminalCollision(
+	states [][][][]State,
+	start *State,
+	vx, vy int,
+) (state *State) {
 	max_x := len(states) - 1
 	max_y := len(states[0]) - 1
 
-	for dx := 0; dx <= vx; dx++ {
-		newx := start.X + dx
-		// Ignore out of bounds states
-		if newx > max_x {
-			continue
-		}
-		for dy := 0; dy <= vy; dy++ {
-			newy := start.Y + dy
-			// Ignore out of bounds states
-			if newy > max_y {
-				continue
-			}
+	// Unitize the <vx, vy> velocity vector: <nvx, nvy>
+	norm := math.Sqrt(float64(vx*vx) + float64(vy*vy))
+	nvx := float64(vx) / norm
+	nvy := float64(vy) / norm
+	numIter := int(math.Round(float64(vx) / nvx))
+	xf := float64(start.X)
+	yf := float64(start.Y)
 
-			traversed := &states[newx][newy][vx][vy]
-			if traversed.CellType == WALL {
-				state = traversed
-				return
-			}
+	for i := 0; i < numIter; i++ {
+		xf += nvx
+		x := int(math.Round(xf))
+		if x < 0 || x > max_x {
+			return
+		}
+
+		yf += nvy
+		y := int(math.Round(yf))
+		if y < 0 || y > max_y {
+			return
+		}
+
+		traversed := &states[x][y][0][0]
+		if traversed.CellType == WALL {
+			state = traversed
+			return
 		}
 	}
+
 	return
 }
 
 // Get a random velocity change (dv) in (-1,0,+1) (per problem def.).
 func getRandDv() int {
-	return rand.Int()%3 - 1
+	return (rand.Int() % NUM_ACCELERATIONS) + MIN_ACCELERATION
 }
 
 func getRandAction(cur_state *State) (action *Action) {
@@ -266,20 +295,24 @@ func getReward(target *State) (reward float64) {
 	switch target.CellType {
 	case WALL:
 		reward = COLLISION_REWARD
-	case START, TRACK, FINISH:
+	case START, TRACK:
 		reward = STEP_REWARD
+	case FINISH:
+		reward = 15
 	default:
-		// Degenerate case; unreachable code if all actions are covered in switch.
+		// Degenerate case; unreachable if all actions are covered in switch.
 		panic("Shazbot!")
 	}
 	return
 }
 
-func is_terminal(state *State) bool {
+func isTerminal(state *State) bool {
 	return state.CellType == WALL || state.CellType == FINISH
 }
 
 // For a fixed grid position, print all of its velocity subvalues.
+//
+//nolint:unused // Sometimes this is used in development.
 func print_substates(states [][][][]State, x, y int) {
 	fmt.Printf("Velocity vals for cell (%d,%d)\n", x, y)
 	for vx := 0; vx < len(states[x][y]); vx++ {
@@ -294,13 +327,25 @@ func print_substates(states [][][][]State, x, y int) {
 // Given the current state, returns the max-valued reachable state per all available actions.
 // NOTE: algorithmically the agent must consider collision when searching for the maximum
 // next state. The getSuccessor function does this internally, which here results in the returned
-// state presumably being a low-valued collision state (a wall). But it just needs to remembered
+// state presumably being a low-valued collision state (a wall). But it just needs to be remembered
 // that the agent's max value search must account for the environment, else its policy might converge
 // to something invalid due to invalid values, by evaluating bad states as good.
-func get_max_successor(states [][][][]State, cur_state *State) (target *State, action *Action) {
+func getMaxSuccessor(states [][][][]State, cur_state *State) (target *State, action *Action) {
 	maxVal := -math.MaxFloat64
-	for dvx := -1; dvx < 2; dvx++ {
-		for dvy := -1; dvy < 2; dvy++ {
+	for dvx := MIN_ACCELERATION; dvx < MAX_ACCELERATION; dvx++ {
+		// ignore acceleration actions yielding invalid velocities
+		new_vx := cur_state.VX + dvx
+		if new_vx > MAX_VELOCITY || new_vx < MIN_VELOCITY {
+			continue
+		}
+
+		for dvy := MIN_ACCELERATION; dvy < MAX_ACCELERATION; dvy++ {
+			// ignore acceleration actions yielding invalid velocities
+			new_vy := cur_state.VY + dvy
+			if new_vy > MAX_VELOCITY || new_vy < MIN_VELOCITY {
+				continue
+			}
+
 			// Get the successor state and its value; trad MC does not store Q values for lookup, so hard-coded rules are used (e.g. for collision, etc.)
 			candidate_action := &Action{Dvx: dvx, Dvy: dvy}
 			successor := getSuccessor(states, cur_state, candidate_action)
@@ -385,7 +430,7 @@ func alphaMonteCarloVanillaTrain(
 			target = getSuccessor(states, state, action)
 		} else {
 			// Exploitation: search for max-valued state per available actions.
-			target, action = get_max_successor(states, state)
+			target, action = getMaxSuccessor(states, state)
 		}
 		return target, action
 	}
@@ -412,7 +457,7 @@ func alphaMonteCarloVanillaTrain(
 
 				episode := Episode{}
 				state := genInitState()
-				for !is_terminal(state) {
+				for !isTerminal(state) {
 					successor, action := policyFn(state)
 					reward := getReward(successor)
 					episode = append(
@@ -454,16 +499,17 @@ func alphaMonteCarloVanillaTrain(
 	estimator := func(
 		eta, gamma float64,
 		progressFn ProgressFunc) {
-		episode_count := 0
+		epCount := 0
 		for episode := range episodes {
+			ep := *episode
 			// Set terminal states to the value of the reward for stepping into them.
-			last_step := (*episode)[len(*episode)-1]
-			last_step.Successor.Value.AtomicSet(last_step.Reward)
+			last := ep[len(ep)-1]
+			last.Successor.Value.AtomicSet(last.Reward)
 			// Propagate rewards backward from terminal state per episode
 			reward := 0.0
-			for _, t := range Rev(len(*episode)) {
+			for _, t := range Rev(len(ep)) {
 				// NOTE: not tracking states' is-visited status, so for now this is an every-visit MC implementation.
-				step := (*episode)[t]
+				step := ep[t]
 				reward += step.Reward
 				val := step.State.Value.AtomicRead()
 				delta := eta * (reward - val)
@@ -473,8 +519,8 @@ func alphaMonteCarloVanillaTrain(
 			}
 
 			// Hook: periodically do some other processing (publishing state values for views, etc.)
-			episode_count++
-			progressFn(ctx, episode_count)
+			epCount++
+			progressFn(ctx, epCount)
 		}
 	}
 	go estimator(eta, gamma, progressFn)

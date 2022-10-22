@@ -6,15 +6,11 @@ import (
 	"tabular/grid_world"
 )
 
-// Cell is for converting the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
+// CellViewModel is for converting the [x][y][vx][vy]State gridworld to a simpler x/y only set of cells,
 // oriented in svg coordinate system such that [0][0] is the logical cell that would
-// be printed in the console at top left. This purpose of [][]Cells is convenient
-// traversal and data for generating golang templates; otherwise one must implement
-// ugly template funcs to map the [][][][]State structure to views, which is tedious.
-// As a rule of thumb, Cell fields should be immediately usable as view parameters.
-// The purpose of Cell itself is to contain ephemeral descriptors (max action direction,
-// etc) useful for putting in the view, and arbitrary calculated fields can be added as desired.
-type Cell struct {
+// be printed in the console at top left. CellViewModel fields should be immediately usable as
+// view parameters, arbitrary calculated fields can be added as desired.
+type CellViewModel struct {
 	X, Y                int
 	Max                 float64
 	PolicyArrowRotation int
@@ -27,27 +23,43 @@ type Cell struct {
 // the coordinate system.
 // TODO: where can this live? Is reorg needed? Notice how this references model.State and helpers.
 // I suppose this is fine, but re-evaluate.
-func Convert(states [][][][]grid_world.State) (cells [][]Cell) {
-	cells = make([][]Cell, len(states))
+func Convert(states [][][][]grid_world.State) (cells [][]CellViewModel) {
+	cells = make([][]CellViewModel, len(states))
 	max_y := len(states[0])
 	for x := range states {
-		cells[x] = make([]Cell, max_y)
+		cells[x] = make([]CellViewModel, max_y)
 	}
 
-	grid_world.VisitXYStates(states, func(velstates [][]grid_world.State) {
+	maxVisitor := func(velstates [][]grid_world.State) {
 		x, y := velstates[0][0].X, velstates[0][0].Y
 		cellType := velstates[0][0].CellType
+
 		maxState := grid_world.MaxVelState(velstates)
-		// flip the y indices for displaying in svg coordinate system
-		cells[x][y] = Cell{
-			X:                   x,
+		//var maxState *grid_world.State
+		// FUTURE: the below shows only the zero-velocity state for START states, which
+		// are the only valid ones. This actually generalizes: only reachable states should
+		// be visualized. But its a detail, I don't need the precision and just want to see overall shape.
+		//if cellType == grid_world.START {
+		//	// TODO: here again, finding the index of the zero-velocity is difficult because the
+		//	// indices were previously aligned with the velocity values themselves.
+		//	zeroVelIndex := int(math.Abs((grid_world.MAX_VELOCITY - grid_world.MIN_VELOCITY) / 2))
+		//	maxState = &velstates[zeroVelIndex][zeroVelIndex]
+		//} else {
+		//	maxState = grid_world.MaxVelState(velstates)
+		//}
+
+		cells[x][y] = CellViewModel{
+			X: x,
+			// flip y indices for svg coordinate system
 			Y:                   max_y - y - 1,
 			Max:                 maxState.Value.AtomicRead(),
 			PolicyArrowRotation: getDegrees(maxState),
 			PolicyArrowScale:    getScale(maxState),
 			Fill:                getFill(cellType),
 		}
-	})
+	}
+
+	grid_world.VisitXYStates(states, maxVisitor)
 	return
 }
 

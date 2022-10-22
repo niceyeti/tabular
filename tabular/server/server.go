@@ -44,7 +44,7 @@ import (
 type Server struct {
 	addr string
 	// TODO: eliminate? 'last' patterns are always a code smell; the initial state should be pumped regardless...
-	lastUpdate [][]cell_views.Cell
+	lastUpdate [][]cell_views.CellViewModel
 	rootView   *root_view.RootView
 }
 

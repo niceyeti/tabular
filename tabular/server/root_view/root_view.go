@@ -31,17 +31,17 @@ func NewRootView(
 	// But this could also be done by building/managing the views in advance and querying them on the fly.
 	// So whatevs. I guess its nice that the factory provides this mobile encapsulation of views and chans,
 	// and extends other options. Serving views is the server's only responsibility, so this fits.
-	views, err := fastview.NewViewBuilder[[][][][]grid_world.State, [][]cell_views.Cell]().
+	views, err := fastview.NewViewBuilder[[][][][]grid_world.State, [][]cell_views.CellViewModel]().
 		WithContext(ctx).
 		WithModel(stateUpdates, cell_views.Convert).
 		WithView(func(
 			done <-chan struct{},
-			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
+			cellUpdates <-chan [][]cell_views.CellViewModel) fastview.ViewComponent {
 			return cell_views.NewValuesGrid(done, cellUpdates)
 		}).
 		WithView(func(
 			done <-chan struct{},
-			cellUpdates <-chan [][]cell_views.Cell) fastview.ViewComponent {
+			cellUpdates <-chan [][]cell_views.CellViewModel) fastview.ViewComponent {
 			return cell_views.NewValueFunction(done, cellUpdates)
 		}).
 		Build()
