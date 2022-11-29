@@ -145,6 +145,12 @@ An array of size i, whose entries are j's.
         Take: set arr[i] to arr[i] ^ j, only if arr[i] ^ j != 0.
         Give: set arr[i] to arr[i] ^ j, only if arr[i] ^ j == 0.
 
+Useful data structures: k-d trees (k==2) are amenable to collision detecting and nearest-neighbor range searches,
+though such a tree would have to be updated based on the dynamically-changing coordinates of agents. This
+could be done a number of ways. But a google search for 'k-d trees collision detection' will yield some of the
+research and other relevant data structures, borrowed from the field of game programming (much of which is the
+same problem).
+
 
 
 In many textbook examples like the classic 2d 'gridworld', matrix indices represent discrete states and matrix entries are state-value estimates.

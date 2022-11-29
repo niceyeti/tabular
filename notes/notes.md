@@ -32,37 +32,3 @@ they apply changes to this dom 3) some other component diffs the changes and pus
 
 
 
-
-DevSecOps with AH:
-1) His background in DevSecOps
-Research projects:
-- diodes etc
-- any current open source / projects I can grab?
-- Ohio life
-- MITRE lifestyle and role structure:
-    * dependent on government grants?
-    * longevity of work seems strong, security will not cease relevance
-    * 
-3) Research connections at WSU: I am completely willing to do pro bono security work
-while I search for a new job. Not only will it sharpen my skills, I think it would be
-extremely fun. The independence would be awesome compared with my recent experience at
-SEL (not bad, but they optimize for your time as they ought to).
-
-My experience at SEL hardened my interest DevSecOps. It solves valuable problems,
-and I'm somewhat uncompromising when it comes to finding a role in that space.
-While I still love and envy ML work, DevSecOps is hyper-focused on developer productivity,
-teamwork, and leadership, that I'm grateful to have found a real niche where I can lose
-myself in work.
-
-Personal/Seattle stories: probably let Adam drive these. SEL would have me back, but I've
-outgrown them (anti-OSS, framework obsessed, anti-linux when building linux platforms).
-
-AH:
-- Colorado Springs is a go
-- Lab work is given at leisure, researchers choose projects to work on
-- Could follow up per MITRE roles
-- Next directions: NAVSEA, PNNL Seattle, etc. Giddy up and go.
-
-
-
-
